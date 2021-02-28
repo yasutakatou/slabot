@@ -5,7 +5,7 @@ Bringing true chatops with slack to your team.
 
 ## 提案
 
-slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
+### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
 
 「なんか、このログ気になりますね。。/var/xxxでこのエラーコードでgrepしてもらえますか？」
 
