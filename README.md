@@ -3,7 +3,7 @@ Bringing true chatops with slack to your team.
 
 ![1](https://user-images.githubusercontent.com/22161385/109412353-d521c380-79ea-11eb-88d5-a83380923002.gif)
 
-## 提案
+## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
 
@@ -44,7 +44,7 @@ go build slabot.go
 
 ### 注！ SlackにBotを許可する設定を入れる必要があります
 
-[この辺りを参考に設定していただければ](https://qiita.com/frozenbonito/items/cf75dadce12ef9a048e9)
+[この辺りを参考に設定していただければ](https://qiita.com/frozenbonito/items/cf75dadce12ef9a048e9)<br>
 トークンの環境変数の設定や、/slack/eventsに飛ばすところなんか同じです。
 
 ## 使い方
