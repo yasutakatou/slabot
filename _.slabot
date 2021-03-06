@@ -1,8 +1,8 @@
 [ALLOWID]
 U01NJBRKGLD
-[PERMIT]
-ls
-cat
-cd
+[REJECT]
+rm 
+passwd
+vi 
 [HOSTS]
-test,127.0.0.1,22,slabot,secretpassword,/bin/bash
+test,127.0.0.1,22,ec2-user,/home/ec2-user/katotest3.pem,/bin/bash

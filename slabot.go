@@ -1,23 +1,21 @@
 /*
- * (detail)
+ * Bringing true chatops with slack to your team.
  *
  * @author    yasutakatou
  * @copyright 2021 yasutakatou
- * @license   (???)
+ * @license   BSD-2-Clause License, ISC License
  */
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	crt "crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/appleboy/easyssh-proxy"
-	"github.com/slack-go/slack"
-	"github.com/slack-go/slack/slackevents"
-	"github.com/tmc/scp"
-	"golang.org/x/crypto/ssh"
-	"gopkg.in/ini.v1"
 	"io"
 	"io/ioutil"
 	"log"
@@ -27,17 +25,25 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/appleboy/easyssh-proxy"
+	"github.com/slack-go/slack"
+	"github.com/slack-go/slack/slackevents"
+	"github.com/tmc/scp"
+	"golang.org/x/crypto/ssh"
+	"gopkg.in/ini.v1"
 )
 
 var (
-	debug     bool
-	needSCP   bool
-	RETRY     int
-	users     []string
-	permitCMD []string
-	hosts     []hostsData
-	udata     []userData
-	botName   string = "@slabot "
+	debug   bool
+	needSCP bool
+	RETRY   int
+	toFile  int
+	users   []string
+	rejects []string
+	hosts   []hostsData
+	udata   []userData
+	botName string
 )
 
 type userData struct {
@@ -74,6 +80,11 @@ func main() {
 	_port := flag.String("port", "8080", "[-port=port number]")
 	_needSCP := flag.Bool("scp", true, "[-scp=need scp mode (true is enable)]")
 	_RETRY := flag.Int("retry", 10, "[-retry=retry counts.]")
+	_plainpassword := flag.Bool("plainpassword", false, "[-plainpassword=use plain text password (true is enable)]")
+	_decryptkey := flag.String("decrypt", "", "[-decrypt=password decrypt key string]")
+	_encrypt := flag.String("encrypt", "", "[-encrypt=password encrypt key string ex) pass:key (JUST ENCRYPT EXIT!)]")
+	_TOFILE := flag.Int("toFile", 20, "[-toFile=if output over this value. be file.]")
+	_botName := flag.String("bot", "slabot", "[-bot=slack bot name (@ + name)]")
 
 	flag.Parse()
 
@@ -81,9 +92,23 @@ func main() {
 	debug = bool(*_Debug)
 	Config := string(*_Config)
 	RETRY = int(*_RETRY)
+	toFile = int(*_TOFILE)
+	botName = "@" + string(*_botName) + " "
+
+	if len(*_encrypt) > 0 && strings.Index(*_encrypt, ":") != -1 {
+		strs := strings.Split(*_encrypt, ":")
+		enc, err := encrypt(strs[0], []byte(addSpace(strs[1])))
+		if err == nil {
+			fmt.Println("Encrypt: " + enc)
+			os.Exit(0)
+		} else {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
 
 	if Exists(Config) == true {
-		loadConfig(Config)
+		loadConfig(Config, addSpace(*_decryptkey), *_plainpassword)
 	} else {
 		fmt.Printf("Fail to read config file: %v\n", Config)
 		os.Exit(1)
@@ -178,7 +203,7 @@ func slackHandler(w http.ResponseWriter, r *http.Request) {
 				fmt.Println("slack call: ", r.RemoteAddr, r.URL.Path, event.User, command)
 			}
 
-			trueFalse, text := eventSwitcher(event.User, command)
+			trueFalse, text := eventSwitcher(event.User, command, event.Channel)
 
 			if trueFalse == false {
 				text = "Error: " + text
@@ -193,7 +218,11 @@ func slackHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func eventSwitcher(User, Command string) (bool, string) {
+func eventSwitcher(User, Command, channel string) (bool, string) {
+	// for debug
+	// udata[checkUsers(User)].HOST = 0
+	// for debug
+
 	trueFalse := false
 	data := ""
 
@@ -204,12 +233,6 @@ func eventSwitcher(User, Command string) (bool, string) {
 	if allowUser(User) == false {
 		trueFalse = false
 		data = User + " : user not allow"
-	} else if strings.Index(Command, "cd ") == 0 {
-		stra := strings.Split(Command, "cd ")
-		udata[checkUsers(User)].PWD = stra[1]
-
-		trueFalse = true
-		data = stra[1] + " : pwd set"
 	} else if strings.Index(Command, "SETHOST=") == 0 {
 		stra := strings.Split(Command, "SETHOST=")
 		hostInt := hostCheck(stra[1])
@@ -228,7 +251,7 @@ func eventSwitcher(User, Command string) (bool, string) {
 		}
 	} else {
 		if checkHost(User) == true {
-			trueFalse, data = checkPreExecuter(User, Command, udata[checkUsers(User)].HOST)
+			trueFalse, data = checkPreExecuter(User, Command, udata[checkUsers(User)].HOST, channel)
 		} else {
 			trueFalse = false
 			data = Command + ": host not set"
@@ -237,7 +260,7 @@ func eventSwitcher(User, Command string) (bool, string) {
 	return trueFalse, data
 }
 
-func writeFile(filename, stra string, userInt int) bool {
+func writeFile(filename, stra string, userInt int, dirFlag bool) bool {
 	file, err := os.Create(filename)
 	if err != nil {
 		fmt.Println(err)
@@ -245,7 +268,9 @@ func writeFile(filename, stra string, userInt int) bool {
 	}
 	defer file.Close()
 
-	_, err = file.WriteString("cd " + udata[userInt].PWD + "\n")
+	if dirFlag == true {
+		_, err = file.WriteString("cd " + udata[userInt].PWD + "\n")
+	}
 	_, err = file.WriteString(stra + "\n")
 	if err != nil {
 		fmt.Println(err)
@@ -254,9 +279,9 @@ func writeFile(filename, stra string, userInt int) bool {
 	return true
 }
 
-func loadConfig(filename string) {
+func loadConfig(filename, decryptstr string, plainpassword bool) {
 	loadOptions := ini.LoadOptions{}
-	loadOptions.UnparseableSections = []string{"ALLOWID", "PERMIT", "HOSTS"}
+	loadOptions.UnparseableSections = []string{"ALLOWID", "REJECT", "HOSTS"}
 
 	cfg, err := ini.LoadSources(loadOptions, filename)
 	if err != nil {
@@ -265,8 +290,8 @@ func loadConfig(filename string) {
 	}
 
 	setSingleConfigStrs(&users, "ALLOWID", cfg.Section("ALLOWID").Body())
-	setSingleConfigStrs(&permitCMD, "PERMIT", cfg.Section("PERMIT").Body())
-	setSingleConfigHosts(&hosts, "HOSTS", cfg.Section("HOSTS").Body())
+	setSingleConfigStrs(&rejects, "REJECT", cfg.Section("REJECT").Body())
+	setSingleConfigHosts(&hosts, "HOSTS", cfg.Section("HOSTS").Body(), decryptstr, plainpassword)
 }
 
 func setSingleConfigStrs(config *[]string, configType, datas string) {
@@ -283,7 +308,7 @@ func setSingleConfigStrs(config *[]string, configType, datas string) {
 	}
 }
 
-func setSingleConfigHosts(config *[]hostsData, configType, datas string) {
+func setSingleConfigHosts(config *[]hostsData, configType, datas, decryptstr string, plainpassword bool) {
 	if debug == true {
 		fmt.Println(" -- " + configType + " --")
 	}
@@ -291,11 +316,23 @@ func setSingleConfigHosts(config *[]hostsData, configType, datas string) {
 		if len(v) > 0 {
 			if strings.Index(v, ",") != -1 {
 				strs := strings.Split(v, ",")
-				*config = append(*config, hostsData{RULE: strs[0], HOST: strs[1], PORT: strs[2], USER: strs[3], PASSWD: strs[4], SHEBANG: strs[5]})
+				pass := ""
+				if plainpassword == true || Exists(strs[4]) == true {
+					pass = strs[4]
+				} else {
+					passTmp, err := decrypt(strs[4], []byte(decryptstr))
+					if err != nil {
+						fmt.Println("ERROR: not password decrypt!")
+						fmt.Println(err)
+						os.Exit(1)
+					}
+					pass = passTmp
+				}
+				*config = append(*config, hostsData{RULE: strs[0], HOST: strs[1], PORT: strs[2], USER: strs[3], PASSWD: pass, SHEBANG: strs[5]})
+				if debug == true {
+					fmt.Println(hostsData{RULE: strs[0], HOST: strs[1], PORT: strs[2], USER: strs[3], PASSWD: pass, SHEBANG: strs[5]})
+				}
 			}
-		}
-		if debug == true {
-			fmt.Println(v)
 		}
 	}
 }
@@ -349,7 +386,7 @@ func checkUsers(User string) int {
 			return i
 		}
 	}
-	udata = append(udata, userData{ID: User, HOST: -1, PWD: "~/"})
+	udata = append(udata, userData{ID: User, HOST: -1, PWD: os.Getenv("HOME")})
 	return len(udata) - 1
 }
 
@@ -395,7 +432,7 @@ func apiHandler(w http.ResponseWriter, r *http.Request) {
 
 	data := responseData{Status: "", Message: ""}
 
-	trueFalse, text := eventSwitcher(p.User, p.Command)
+	trueFalse, text := eventSwitcher(p.User, p.Command, "")
 
 	if trueFalse == true {
 		data = responseData{Status: "Success", Message: text}
@@ -420,7 +457,7 @@ func JsonResponseToByte(status, message string) []byte {
 	return []byte(outputJson)
 }
 
-func checkPreExecuter(User, Command string, hostInt int) (bool, string) {
+func checkPreExecuter(User, Command string, hostInt int, channel string) (bool, string) {
 	userInt := userCheck(User)
 	if userInt == -1 {
 		if debug == true {
@@ -436,13 +473,70 @@ func checkPreExecuter(User, Command string, hostInt int) (bool, string) {
 		return false, "command sring not include"
 	}
 
-	strs := executer(userInt, hostInt, Command)
-	if len(strs) == 0 {
-		return false, "command not execute"
-	} else {
-		return true, strs
+	for i := 0; i < len(rejects); i++ {
+		if strings.Index(Command, rejects[i]) != -1 {
+			fmt.Println("Error: include reject string. ", User, Command)
+			return false, "include reject string!"
+		}
 	}
+
+	if strings.Index(Command, "UPLOAD=") == 0 {
+		if upload(userInt, Command, channel) == false {
+			return false, "file upload fail"
+		} else {
+			return true, "file upload success"
+		}	
+	} else {
+		strs := executer(userInt, hostInt, Command, channel)
+		if len(strs) == 0 {
+			return false, "command not execute"
+		} else {
+			return true, strs
+		}	
+	}
+
 	return true, User + ":" + Command
+}
+
+func upload(userInt int, Command ,channel string) bool {
+	strs := strings.Split(Command, "=")
+
+	filepath := udata[userInt].PWD + "/" + strs[1]
+	if Exists(filepath) == false {
+		filepath = udata[userInt].PWD + strs[1]
+		if Exists(filepath) == false {
+			if debug == true {
+				fmt.Println("upload fail " + filepath)
+			}
+			return false
+		}
+	}
+
+	if uploadToSlack(filepath,channel) == false {
+		return false
+	}
+	return true
+}
+
+func uploadToSlack(filename,channel string) bool {
+	if debug == true {
+		fmt.Println("uploading.. " + filename)
+	}
+
+	api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
+	params := slack.FileUploadParameters{
+		Title: "upload " + filename,
+		File: filename,
+		Channels: []string{channel},
+	}
+	file, err := api.UploadFile(params)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return false
+	}
+
+	fmt.Printf("upload! Name: %s, URL: %s\n", file.Name, file.URL, file.ID)
+	return true
 }
 
 func userCheck(User string) int {
@@ -463,15 +557,15 @@ func hostCheck(Host string) int {
 	return -1
 }
 
-func executer(userInt, hostInt int, Command string) string {
+func executer(userInt, hostInt int, Command,channel string) string {
 	sshCommand := "cd " + udata[userInt].PWD + ";" + Command
+	tmpFile := "tmp." + users[userInt]
 	if needSCP == true {
-		tmpFile := "tmp." + users[userInt] + ".sh"
-		writeFile(tmpFile, Command, userInt)
+		writeFile(tmpFile + ".sh", Command, userInt, true)
 
 		scpFlag := false
 		for i := 0; i < RETRY; i++ {
-			if scpDo(hostInt, tmpFile) == true {
+			if scpDo(hostInt, tmpFile + ".sh") == true {
 				scpFlag = true
 				break
 			}
@@ -479,28 +573,46 @@ func executer(userInt, hostInt int, Command string) string {
 		if scpFlag == false {
 			return ""
 		}
-		sshCommand = hosts[hostInt].SHEBANG + " " + tmpFile
+		sshCommand = hosts[hostInt].SHEBANG + " " + tmpFile + ".sh"
 	}
 
-	sshFlag := false
+	var err error
+	prompt := "[" + botName + udata[userInt].PWD + "]$ " + Command + "\n"
+	done := false
 	strs := ""
 	for i := 0; i < RETRY; i++ {
-		strs = sshDo(hostInt, sshCommand)
-		if len(strs) > 0 {
-			sshFlag = true
+		strs,done,err = sshDo(hostInt, sshCommand)
+		if done == true && len(strs) > 0 {
+			if strings.Count(strs, "\n") > toFile {
+				writeFile(tmpFile + ".txt", prompt + strs, userInt, false)
+				if uploadToSlack(tmpFile + ".txt",channel) == false {
+					return ""
+				}
+				return " "
+			}
 			break
 		}
 	}
-	if sshFlag == false {
+	if done == false {
 		return ""
 	}
-	return strs
+
+	if strings.Index(Command, "pwd") == 0 {
+		return "```\n" + prompt + udata[userInt].PWD + "\n" +  "```"
+	}
+
+	if err == nil && strings.Index(Command, "cd ") == 0 {
+		stra := strings.Split(Command, "cd ")
+		udata[userInt].PWD = stra[1]
+	}
+
+	if len(strs) > 1 {
+		return  "```\n" + prompt + strs + "```"
+	}
+	return "```\n" + prompt + "```"
 }
 
-func sshDo(hostInt int, Command string) string {
-	if debug == true {
-		fmt.Println("ssh: ", Command)
-	}
+func sshDo(hostInt int, Command string) (string,bool,error) {
 	ssh := &easyssh.MakeConfig{
 		User:     hosts[hostInt].USER,
 		Server:   hosts[hostInt].HOST,
@@ -509,29 +621,38 @@ func sshDo(hostInt int, Command string) string {
 		Timeout:  60 * time.Second,
 	}
 
-	stdout, stderr, done, err := ssh.Run(Command, 60*time.Second)
-
-	if err != nil {
-		panic("Can't run remote command: " + err.Error())
-		return ""
-	} else {
-		if debug == true {
-			fmt.Println("don is :", done, "stdout is :", stdout, ";   stderr is :", stderr)
-		}
-		fmt.Println(len(stdout))
-		fmt.Println(len(stderr))
-
-		if done == true {
-			if len(stdout) > 0 {
-				return stdout
-			} else if len(stderr) > 0 {
-				return stderr
-			} else {
-				return " "
-			}
+	if Exists(hosts[hostInt].PASSWD) == true {
+		ssh = &easyssh.MakeConfig{
+			User:     hosts[hostInt].USER,
+			Server:   hosts[hostInt].HOST,
+			KeyPath:  hosts[hostInt].PASSWD,
+			Port:     hosts[hostInt].PORT,
+			Timeout:  60 * time.Second,
+			Passphrase: "",
 		}
 	}
-	return ""
+
+	if debug == true {
+		fmt.Println("ssh: ", Command)
+		fmt.Println(ssh)
+	}
+
+	stdout, stderr, done, err := ssh.Run(Command, 60*time.Second)
+
+	if debug == true {
+		fmt.Println("don is :", done, "stdout is :", stdout, ";   stderr is :", stderr)
+	}
+
+	if done == true {
+		if len(stdout) > 0 {
+			return stdout,done,err
+		} else if len(stderr) > 0 {
+			return stderr,done,err
+		} else {
+			return " ",done,err
+		}
+	}
+	return " ",done,err
 }
 
 func scpDo(hostInt int, tmpFile string) bool {
@@ -542,6 +663,28 @@ func scpDo(hostInt int, tmpFile string) bool {
 			ssh.Password(hosts[hostInt].PASSWD),
 		},
 	}
+
+	if Exists(hosts[hostInt].PASSWD) == true {
+		buf, err := ioutil.ReadFile(hosts[hostInt].PASSWD)
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
+		key, err := ssh.ParsePrivateKey(buf)
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
+
+		config = &ssh.ClientConfig{
+			User:            hosts[hostInt].USER,
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeys(key),
+			},
+		}
+	}
+
 	client, err := ssh.Dial("tcp", hosts[hostInt].HOST+":"+hosts[hostInt].PORT, config)
 	if err != nil {
 		fmt.Print(err.Error())
@@ -560,4 +703,63 @@ func scpDo(hostInt int, tmpFile string) bool {
 	}
 	defer session.Close()
 	return true
+}
+
+// FYI: http://www.inanzzz.com/index.php/post/f3pe/data-encryption-and-decryption-with-a-secret-key-in-golang
+// encrypt encrypts plain string with a secret key and returns encrypt string.
+func encrypt(plainData string, secret []byte) (string, error) {
+	cipherBlock, err := aes.NewCipher(secret)
+	if err != nil {
+		return "", err
+	}
+
+	aead, err := cipher.NewGCM(cipherBlock)
+	if err != nil {
+		return "", err
+	}
+
+	nonce := make([]byte, aead.NonceSize())
+	if _, err = io.ReadFull(crt.Reader, nonce); err != nil {
+		return "", err
+	}
+
+	return base64.URLEncoding.EncodeToString(aead.Seal(nonce, nonce, []byte(plainData), nil)), nil
+}
+
+// decrypt decrypts encrypt string with a secret key and returns plain string.
+func decrypt(encodedData string, secret []byte) (string, error) {
+	encryptData, err := base64.URLEncoding.DecodeString(encodedData)
+	if err != nil {
+		return "", err
+	}
+
+	cipherBlock, err := aes.NewCipher(secret)
+	if err != nil {
+		return "", err
+	}
+
+	aead, err := cipher.NewGCM(cipherBlock)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := aead.NonceSize()
+	if len(encryptData) < nonceSize {
+		return "", err
+	}
+
+	nonce, cipherText := encryptData[:nonceSize], encryptData[nonceSize:]
+	plainData, err := aead.Open(nil, nonce, cipherText, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plainData), nil
+}
+
+func addSpace(strs string) string {
+	for i := 0; len(strs) < 16; i++ {
+		strs += "0"
+	}
+	return strs
 }
