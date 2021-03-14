@@ -23,9 +23,9 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
-	"strconv"
 
 	"github.com/appleboy/easyssh-proxy"
 	"github.com/fsnotify/fsnotify"
@@ -122,25 +122,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *_Api == true {
-		http.HandleFunc("/api", apiHandler)
-		go func() {
-			err := http.ListenAndServeTLS(":"+string(*_port), string(*_cert), string(*_key), nil)
-			if err != nil {
-				log.Fatal("ListenAndServeTLS: ", err)
-			}
-		}()
-	} else if *_Rest == true {
-		http.HandleFunc("/slack/events", slackHandler)
-		go func() {
-			if err := http.ListenAndServe(":"+string(*_port), nil); err != nil {
-				log.Fatal(err)
-			}
-		}()
-	} else {
-		socketMode()
-	}
-
 	// creates a new file watcher
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -161,6 +142,25 @@ func main() {
 
 	if err := watcher.Add(Config); err != nil {
 		fmt.Println("ERROR", err)
+	}
+
+	if *_Api == true {
+		http.HandleFunc("/api", apiHandler)
+		go func() {
+			err := http.ListenAndServeTLS(":"+string(*_port), string(*_cert), string(*_key), nil)
+			if err != nil {
+				log.Fatal("ListenAndServeTLS: ", err)
+			}
+		}()
+	} else if *_Rest == true {
+		http.HandleFunc("/slack/events", slackHandler)
+		go func() {
+			if err := http.ListenAndServe(":"+string(*_port), nil); err != nil {
+				log.Fatal(err)
+			}
+		}()
+	} else {
+		socketMode()
 	}
 
 	for {
@@ -341,7 +341,7 @@ func returnAlias(userInt int) string {
 	strs := ""
 	for i := 0; i < len(udata[userInt].ALIAS); i++ {
 		s := strconv.Itoa(i + 1)
-		strs = strs + "[" + s + "] " +udata[userInt].ALIAS[i]
+		strs = strs + "[" + s + "] " + udata[userInt].ALIAS[i] + "\n"
 	}
 	return strs
 }
@@ -349,18 +349,34 @@ func returnAlias(userInt int) string {
 func replaceAlias(userInt int, command string) string {
 	for i := 0; i < len(udata[userInt].ALIAS); i++ {
 		stra := strings.Split(udata[userInt].ALIAS[i], "=")
-		if strings.Index(command, stra[0]) == 0 {
+		if strings.Index(command+" ", stra[0]+" ") == 0 {
 			return strings.Replace(command, stra[0], stra[1], 1)
 		}
 	}
 	return command
 }
 
+func deleteAlias(userInt int, command string) {
+	for i := 0; i < len(udata[userInt].ALIAS); i++ {
+		stra := strings.Split(udata[userInt].ALIAS[i], "=")
+		if strings.Index(command, stra[0]) == 0 {
+			udata[userInt].ALIAS = unset(udata[userInt].ALIAS, i)
+		}
+	}
+}
+
+func unset(s []string, i int) []string {
+	if i >= len(s) {
+		return s
+	}
+	return append(s[:i], s[i+1:]...)
+}
+
 func eventSwitcher(User, Command, channel string) (bool, string) {
 	userInt := checkUsers(User)
 
 	// for debug
-	udata[userInt].HOST = 0
+	// udata[userInt].HOST = 0
 	// for debug
 
 	trueFalse := false
@@ -380,10 +396,18 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 			return true, "<@" + udata[userInt].ID + ">\n```\n" + strs + "```"
 		}
 		if strings.Index(Command, "alias ") == 0 && strings.Index(Command, "=") != -1 {
-			Command := strings.Replace(Command, "alias ", "", 1)
-			udata[userInt].ALIAS = append(udata[userInt].ALIAS, Command)
-			trueFalse = true
-			data = "<@" + udata[userInt].ID + "> " + Command + " : alias set"
+			stra := strings.Split(Command, "=")
+			if len(stra[1]) == 0 {
+				Command := strings.Replace(Command, "alias ", "", 1)
+				deleteAlias(userInt, Command)
+				trueFalse = true
+				data = "<@" + udata[userInt].ID + "> " + Command + " : alias delete"
+			} else {
+				Command := strings.Replace(Command, "alias ", "", 1)
+				udata[userInt].ALIAS = append(udata[userInt].ALIAS, Command)
+				trueFalse = true
+				data = "<@" + udata[userInt].ID + "> " + Command + " : alias set"
+			}
 		} else {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> " + Command + " : alias set fail"
@@ -397,7 +421,10 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not found"
 		} else {
+			fmt.Println(udata[userInt].HOST)
+			fmt.Println(hostInt)
 			udata[userInt].HOST = hostInt
+			fmt.Println(udata[userInt].HOST)
 
 			trueFalse = true
 			data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host set"
@@ -732,14 +759,14 @@ func hostCheck(Host string) int {
 }
 
 func executer(userInt, hostInt int, Command, channel string) string {
-	sshCommand := "export PATH=$PATH ; cd " + udata[userInt].PWD + ";" + Command
+	sshCommand := "cd " + udata[userInt].PWD + ";" + Command
 	tmpFile := "tmp." + users[userInt]
 	if needSCP == true {
-		writeFile(tmpFile+".sh", Command, userInt, true)
+		writeFile(tmpFile+".bat", Command, userInt, true)
 
 		scpFlag := false
 		for i := 0; i < RETRY; i++ {
-			if scpDo(hostInt, tmpFile+".sh") == true {
+			if scpDo(hostInt, tmpFile+".bat") == true {
 				scpFlag = true
 				break
 			}
@@ -747,7 +774,7 @@ func executer(userInt, hostInt int, Command, channel string) string {
 		if scpFlag == false {
 			return ""
 		}
-		sshCommand = "export PATH=$PATH ;" + hosts[hostInt].SHEBANG + " " + tmpFile + ".sh"
+		sshCommand = hosts[hostInt].SHEBANG + " " + tmpFile + ".bat"
 	}
 
 	var err error
