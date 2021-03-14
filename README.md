@@ -7,21 +7,21 @@ Bringing true chatops with slack to your team.
 slack will be reborn as a shell prompt.<br>
 Let's get devs and SREs together in the same channel, and work with the same authority!
 
-- v0.2
-パスワード文字列の暗号化
-禁止文字列の実装
-ファイルのアップロード
-長い出力をファイルにまとめる実装
-エラーをちゃんとslackに出す
-鍵認証に対応
+- v0.2<br>
+パスワード文字列の暗号化<br>
+禁止文字列の実装<br>
+ファイルのアップロード<br>
+長い出力をファイルにまとめる実装<br>
+エラーをちゃんとslackに出す<br>
+鍵認証に対応<br>
 
 - v0.3
-Windows対応(クライアント／ボット両方)
-ソケットモード対応
-コンフィグファイルの変更を検知してホットリロード
-実行者の名前を出力する
-aliasコマンドをつける
-ログ出力をつける
+Windows対応(クライアント／ボット両方)<br>
+ソケットモード対応<br>
+コンフィグファイルの変更を検知してホットリロード<br>
+実行者の名前を出力する<br>
+aliasコマンドをつける<br>
+ログ出力をつける<br>
 
 ## 解決したい課題
 
