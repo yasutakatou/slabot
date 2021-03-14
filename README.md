@@ -47,11 +47,21 @@ go build slabot.go
 
 バイナリをダウンロードして即使いたいなら[こっち](https://github.com/yasutakatou/slabot/releases)
 
-### 注！ SlackにBotを許可する設定を入れる必要があります
+### 注！ SlackにSocketModeでBotを許可する設定を入れる必要があります
+
+[この辺りを参考に設定していただければ](https://www.klab.com/jp/blog/tech/2021/0201-slack.html)<br>
+トークンの環境変数の設定は同じです。以下ソケットモードの設定が必要です。
+
+![socketmode](https://user-images.githubusercontent.com/22161385/111068211-3a0d0b80-850b-11eb-85b8-79744b081145.png)
+![socktoken](https://user-images.githubusercontent.com/22161385/111068221-4002ec80-850b-11eb-9037-bb92495fd0b9.png)
+
+
+### 注！ SlackにBotを許可する設定を入れる必要があります　(v0.2までのslack/eventsでインバウントでイベントを待ち受ける場合)
 
 [この辺りを参考に設定していただければ](https://qiita.com/frozenbonito/items/cf75dadce12ef9a048e9)<br>
 トークンの環境変数の設定や、/slack/eventsに飛ばすところなんか同じです。以下スコープが必要です。
 
+![hooktoken](https://user-images.githubusercontent.com/22161385/111068222-41ccb000-850b-11eb-9d64-dc91d11adce2.png)
 ![scopes](https://user-images.githubusercontent.com/22161385/110207744-eaa25c00-7ec8-11eb-8cb2-f93e5e7fab5e.png)
 
 ## 使い方
@@ -71,11 +81,25 @@ go build slabot.go
 
 なお、cdコマンドに対応しているので**cdでディレクトリを移動したら保持**されます。
 
+- v0.3より 実行者のお名前をメンションしてくれるようになりました！
+
+![viewname](https://user-images.githubusercontent.com/22161385/111068224-45f8cd80-850b-11eb-9240-b9bf3901b423.png)
+
 ### その他の使い方
 
 - UPLOAD=(ファイル名)でサーバー上のファイルをアップできます。
 
 ![upload](https://user-images.githubusercontent.com/22161385/110207740-e4ac7b00-7ec8-11eb-8358-5133b984ec3d.png)
+
+- alias で長ったらしいコマンドの短縮名を付ける事ができます。
+
+alias (**短縮名**)=(**長ったらしいコマンド**)で登録できます。aliasのみなら登録されている一覧を出します。
+
+![alias1](https://user-images.githubusercontent.com/22161385/111068228-485b2780-850b-11eb-8c7d-0b808352882a.png)
+
+alias (**短縮名**)= ←空 でaliasを解除できます。
+
+![alias2](https://user-images.githubusercontent.com/22161385/111068233-4a24eb00-850b-11eb-934b-d385eba8e51d.png)
 
 ## コンフィグファイル
 
@@ -98,6 +122,16 @@ go build slabot.go
 	- この**定義名**を**SETHOST**の後に書くことでコマンドの投げ先をスイッチさせます
 
 ※認証情報　**平文のパスワード**、**暗号化されたパスワード文字列**、**認証鍵のファイル**の3つのどれかを指定します
+
+- v0.3より WindowsのSSH Serverに対応しました！
+
+以下のようにWindowsのOpenSSHにコマンドを投げ込めるようにしました。
+
+![wintarget](https://user-images.githubusercontent.com/22161385/111068235-4db87200-850b-11eb-87c2-c88ddee7d320.png)
+
+使用するシェルのパス(SHEBANG)に以下のようにcmd /Cを指定する事で対応できます。/Cが大文字なので注意！
+
+![winshebang](https://user-images.githubusercontent.com/22161385/111068236-4f823580-850b-11eb-9bda-3e63fe38471c.png)
 
 ### コンフィグ記載例
 
@@ -134,10 +168,14 @@ Usage of slabot:
         [-encrypt=password encrypt key string ex) pass:key (JUST ENCRYPT EXIT!)]
   -key string
         [-key=ssl_certificate_key file path (if you don't use https, haven't to use this option)] (default "localhost-key.pem")
+  -log
+        [-log=logging mode (true is enable)]
   -plainpassword
         [-plainpassword=use plain text password (true is enable)]
   -port string
         [-port=port number] (default "8080")
+  -rest
+        [-rest=normal slack mode (true is enable)]
   -retry int
         [-retry=retry counts.] (default 10)
   -scp
@@ -183,11 +221,19 @@ Encrypt: 5NVkTdvu5-g0pQCcy0RpOnxuaLFplSJZ0SIjtQqyVZKMGcFIuiY=
 ### -key
 apiモードの時に指定する秘密鍵ファイルです。
 
+### -log
+ログ出力モードです。デバッグログが以下のように年・月・日・時のフォーマットで出力されます。
+
+![logging](https://user-images.githubusercontent.com/22161385/111068741-61fd6e80-850d-11eb-8c4a-c890453bc251.png)
+
 ### -plainpassword
 パスワード平文モードです。trueにすると、コンフィグの認証情報部分の文字列を複合せずに平文のまま認証します。
 
 ### -port
 動作するポート番号です。この設定はslack/apiモード両方で有効になります。
+
+### -rest
+v0.2までのslack/eventsでインバウントでイベントを受け取るモードです。デフォはfalseっです。
 
 ### -retry
 内部でscp、sshをリトライする回数です。失敗時にリトライします。
