@@ -5,4 +5,6 @@ rm
 passwd
 vi 
 [HOSTS]
-test,127.0.0.1,22,ec2-user,/home/ec2-user/test.pem,/bin/bash
+test,192.168.0.220,22,pi,rspi.pem,/bin/bash
+windows,192.168.0.1,22,fzk01,mywinpassword,cmd /C
+ec2,1.1.1.1,22,ec2-user,test.pem,/bin/bash
