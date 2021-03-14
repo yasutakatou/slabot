@@ -15,7 +15,7 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 エラーをちゃんとslackに出す<br>
 鍵認証に対応<br>
 
-- v0.3
+- v0.3<br>
 Windows対応(クライアント／ボット両方)<br>
 ソケットモード対応<br>
 コンフィグファイルの変更を検知してホットリロード<br>
