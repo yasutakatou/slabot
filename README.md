@@ -210,5 +210,5 @@ scpでシェルを転送しないモードです。コマンドのみ流すの�
 
 ## ライセンス
 
-BSD-2-Clause License, ISC License
+BSD-2-Clause License, ISC License, BSD-3-Clause License,
 
