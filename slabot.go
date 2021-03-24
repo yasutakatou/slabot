@@ -47,6 +47,7 @@ var (
 	debug      bool
 	logging    bool
 	needSCP    bool
+	delUpload  bool
 	RETRY      int
 	toFile     int
 	users      []string
@@ -106,9 +107,11 @@ func main() {
 
 	_autoRW := flag.Bool("auto", true, "[-auto=config auto read/write mode (true is enable)]")
 	_lockFile := flag.String("lock", ".lock", "[-lock=lock file for auto read/write)]")
+	_delUpload := flag.Bool("delUpload", false, "[-delUpload=file delete after upload (true is enable)]")
 
 	flag.Parse()
 
+	delUpload = bool(*_delUpload)
 	needSCP = bool(*_needSCP)
 	secAlert = bool(*_secAlert)
 	debug = bool(*_Debug)
@@ -370,6 +373,15 @@ func returnAlias(userInt int) string {
 	return strs
 }
 
+func returnHosts() string {
+	strs := ""
+	for i := 0; i < len(udata[userInt].ALIAS); i++ {
+		s := strconv.Itoa(i + 1)
+		strs = strs + "[" + s + "] " + hosts[i].RULE + ": " + hosts[i].HOST + " " + hosts[i].PORT + " " + hosts[i].USER + " " + hosts[i].SHEBANG + "\n"
+	}
+	return strs
+}
+
 func replaceAlias(userInt int, command string) string {
 	for i := 0; i < len(udata[userInt].ALIAS); i++ {
 		stra := strings.Split(udata[userInt].ALIAS[i], "=")
@@ -441,22 +453,35 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> " + Command + " : alias set fail"
 		}
-	} else if strings.Index(Command, "SETHOST=") == 0 {
-		stra := strings.Split(Command, "SETHOST=")
-		hostInt := hostCheck(stra[1])
-		if hostInt == -1 {
-			debugLog("Error: host not found. " + User + " " + Command)
 
-			trueFalse = false
-			data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not found"
-		} else {
-			udata[userInt].HOST = hostInt
-
-			trueFalse = true
-			data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host set"
-			udata[userInt].PWD = setHome()
-			writeUsersData()
+	} else if strings.Index(Command, "SETHOST") == 0 {
+		if Command == "SETHOST" {
+			strs := returnHosts()
+			if len(strs) == 0 {
+				strs = "no hosts!"
+			}
+			return true, "<@" + udata[userInt].ID + ">\n```\n" + strs + "```"
 		}
+		if strings.Index(Command, "SETHOST=") == 0 {
+			stra := strings.Split(Command, "SETHOST=")
+			hostInt := hostCheck(stra[1])
+			if hostInt == -1 {
+				debugLog("Error: host not found. " + User + " " + Command)
+
+				trueFalse = false
+				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not found"
+			} else {
+				udata[userInt].HOST = hostInt
+
+				trueFalse = true
+				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host set"
+				udata[userInt].PWD = setHome()
+				writeUsersData()
+			}
+		}
+	} else if strings.Index(Command, "UPLOAD=") == 0 {
+		stra := strings.Split(Command, "UPLOAD=")
+		trueFalse, data = uploadFile(userInt, stra[1])
 	} else {
 		if checkHost(User) == true {
 			Command = replaceAlias(userInt, Command)
@@ -467,6 +492,56 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 		}
 	}
 	return trueFalse, data
+}
+
+func uploadFile(userInt int, path string) (bool, string) {
+	api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
+	params := slack.GetFilesParameters{
+		User:  udata[userInt].ID,
+		Count: 1,
+	}
+
+	files, _, err := api.GetFiles(params)
+	if err != nil || len(files) == 0 {
+		fmt.Println(err)
+		return false, "get files error"
+	}
+
+	file, err := os.Create(files[0].Name)
+	if err != nil {
+		fmt.Println(err)
+		return false, "file not create: " + files[0].Name
+	}
+
+	error := api.GetFile(files[0].URLPrivateDownload, file)
+	if err != nil {
+		fmt.Println(error)
+		return false, "file not download: " + files[0].Name
+	}
+
+	file.Close()
+
+	if len(path) == 0 {
+		path = udata[userInt].PWD
+	}
+
+	if scpDo(udata[userInt].HOST, files[0].Name, path) == false {
+		return false, "file not scp: " + files[0].Name
+	}
+
+	if err := os.Remove(files[0].Name); err != nil {
+		fmt.Println(err)
+	}
+
+	if delUpload == true {
+		err = api.DeleteFile(files[0].ID)
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			return false, "file upload success and file not delete on slack: " + files[0].Name
+		}
+	}
+
+	return true, "file upload success: " + files[0].Name
 }
 
 func writeUsersData() {
@@ -915,7 +990,7 @@ func executer(userInt, hostInt int, Command, channel string) string {
 
 		scpFlag := false
 		for i := 0; i < RETRY; i++ {
-			if scpDo(hostInt, tmpFile+".bat") == true {
+			if scpDo(hostInt, tmpFile+".bat", ".") == true {
 				scpFlag = true
 				break
 			}
@@ -1013,7 +1088,7 @@ func sshDo(hostInt int, Command string) (string, bool, error) {
 	return " ", done, err
 }
 
-func scpDo(hostInt int, tmpFile string) bool {
+func scpDo(hostInt int, tmpFile, path string) bool {
 	config := &ssh.ClientConfig{
 		User:            hosts[hostInt].USER,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
@@ -1054,7 +1129,7 @@ func scpDo(hostInt int, tmpFile string) bool {
 		fmt.Print(err.Error())
 		return false
 	}
-	err = scp.CopyPath(tmpFile, ".", session)
+	err = scp.CopyPath(tmpFile, path, session)
 	if err != nil {
 		fmt.Print(err.Error())
 		return false
