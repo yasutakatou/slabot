@@ -27,27 +27,39 @@ import (
 	"strings"
 	"time"
 
-	"github.com/appleboy/easyssh-proxy"
-	"github.com/fsnotify/fsnotify"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/appleboy/easyssh-proxy"
+	"github.com/fsnotify/fsnotify"
 	"github.com/tmc/scp"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/ini.v1"
+
+	"github.com/saintfish/chardet"
+	"golang.org/x/text/encoding/japanese"
+	"golang.org/x/text/transform"
 )
 
 var (
-	debug   bool
-	logging bool
-	needSCP bool
-	RETRY   int
-	toFile  int
-	users   []string
-	rejects []string
-	hosts   []hostsData
-	udata   []userData
-	botName string
+	secAlert   bool
+	debug      bool
+	logging    bool
+	needSCP    bool
+	delUpload  bool
+	sshTimeout int
+	RETRY      int
+	toFile     int
+	users      []string
+	alerts     []string
+	rejects    []string
+	hosts      []hostsData
+	udata      []userData
+	botName    string
+	autoRW     bool
+	lockFile   string
+	configFile string
 )
 
 type userData struct {
@@ -77,6 +89,7 @@ type receiveData struct {
 }
 
 func main() {
+	_secAlert := flag.Bool("alert", true, "[-alert=not allow user or command send alert.(true is enable)]")
 	_Debug := flag.Bool("debug", false, "[-debug=debug mode (true is enable)]")
 	_Logging := flag.Bool("log", false, "[-log=logging mode (true is enable)]")
 	_Config := flag.String("config", ".slabot", "[-config=config file)]")
@@ -91,17 +104,29 @@ func main() {
 	_decryptkey := flag.String("decrypt", "", "[-decrypt=password decrypt key string]")
 	_encrypt := flag.String("encrypt", "", "[-encrypt=password encrypt key string ex) pass:key (JUST ENCRYPT EXIT!)]")
 	_TOFILE := flag.Int("toFile", 20, "[-toFile=if output over this value. be file.]")
+	_sshTimeout := flag.Int("timeout", 30, "[-timeout=timeout count (second). ]")
 	_botName := flag.String("bot", "slabot", "[-bot=slack bot name (@ + name)]")
+
+	_autoRW := flag.Bool("auto", true, "[-auto=config auto read/write mode (true is enable)]")
+	_lockFile := flag.String("lock", ".lock", "[-lock=lock file for auto read/write)]")
+	_delUpload := flag.Bool("delUpload", false, "[-delUpload=file delete after upload (true is enable)]")
+	_checkRules := flag.Bool("check", true, "[-check=check rules. if connect fail to not use rule. (true is enable)]")
 
 	flag.Parse()
 
+	delUpload = bool(*_delUpload)
 	needSCP = bool(*_needSCP)
+	secAlert = bool(*_secAlert)
 	debug = bool(*_Debug)
 	logging = bool(*_Logging)
-	Config := string(*_Config)
+	configFile = string(*_Config)
 	RETRY = int(*_RETRY)
+	sshTimeout = int(*_sshTimeout)
 	toFile = int(*_TOFILE)
 	botName = string(*_botName)
+
+	autoRW = bool(*_autoRW)
+	lockFile = string(*_lockFile)
 
 	if len(*_encrypt) > 0 && strings.Index(*_encrypt, ":") != -1 {
 		strs := strings.Split(*_encrypt, ":")
@@ -115,10 +140,10 @@ func main() {
 		}
 	}
 
-	if Exists(Config) == true {
-		loadConfig(Config, addSpace(*_decryptkey), *_plainpassword)
+	if Exists(configFile) == true {
+		loadConfig(addSpace(*_decryptkey), *_plainpassword, *_checkRules)
 	} else {
-		fmt.Printf("Fail to read config file: %v\n", Config)
+		fmt.Printf("Fail to read config file: %v\n", configFile)
 		os.Exit(1)
 	}
 
@@ -129,18 +154,24 @@ func main() {
 	}
 	defer watcher.Close()
 
-	go func() {
-		for {
-			select {
-			case <-watcher.Events:
-				loadConfig(Config, addSpace(*_decryptkey), *_plainpassword)
-			case <-watcher.Errors:
-				fmt.Println("ERROR", err)
+	if autoRW == true {
+		go func() {
+			for {
+				select {
+				case <-watcher.Events:
+					if Exists(lockFile) == false {
+						loadConfig(addSpace(*_decryptkey), *_plainpassword, *_checkRules)
+					} else {
+						fmt.Println(" - config read locked! - ")
+					}
+				case <-watcher.Errors:
+					fmt.Println("ERROR", err)
+				}
 			}
-		}
-	}()
+		}()
+	}
 
-	if err := watcher.Add(Config); err != nil {
+	if err := watcher.Add(configFile); err != nil {
 		fmt.Println("ERROR", err)
 	}
 
@@ -239,15 +270,40 @@ func socketMode() {
 
 							debugLog("socket call: " + event.User + " " + command)
 
-							trueFalse, text := eventSwitcher(event.User, command, event.Channel)
+							if command == "RULES" {
+								text := slack.NewTextBlockObject(slack.MarkdownType, "Please select *RULE*.", false, false)
+								textSection := slack.NewSectionBlock(text, nil, nil)
 
-							if trueFalse == false {
-								text = "Error: " + text
-							}
+								rules := returnRules()
+								options := make([]*slack.OptionBlockObject, 0, len(rules))
+								for _, v := range rules {
+									optionText := slack.NewTextBlockObject(slack.PlainTextType, v, false, false)
+									options = append(options, slack.NewOptionBlockObject(v, optionText, nil))
+								}
 
-							_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
-							if err != nil {
-								fmt.Printf("failed posting message: %v", err)
+								placeholder := slack.NewTextBlockObject(slack.PlainTextType, "Select RULE", false, false)
+								selectMenu := slack.NewOptionsSelectBlockElement(slack.OptTypeStatic, placeholder, "", options...)
+
+								actionBlock := slack.NewActionBlock("rules", selectMenu)
+
+								fallbackText := slack.MsgOptionText("This client is not supported.", false)
+								blocks := slack.MsgOptionBlocks(textSection, actionBlock)
+
+								if _, err := api.PostEphemeral(event.Channel, event.User, fallbackText, blocks); err != nil {
+									log.Println(err)
+									return
+								}
+							} else {
+								trueFalse, text := eventSwitcher(event.User, command, event.Channel)
+
+								if trueFalse == false {
+									text = "Error: " + text
+								}
+
+								_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
+								if err != nil {
+									fmt.Printf("failed posting message: %v", err)
+								}
 							}
 						}
 					case *slackevents.MemberJoinedChannelEvent:
@@ -256,6 +312,41 @@ func socketMode() {
 				default:
 					client.Debugf("unsupported Events API event received")
 				}
+			case socketmode.EventTypeInteractive:
+				callback, ok := evt.Data.(slack.InteractionCallback)
+				if !ok {
+					fmt.Printf("Ignored %+v\n", evt)
+
+					continue
+				}
+
+				debugLog("Interaction received: " + string(callback.RawState))
+
+				stra := strings.Split(string(callback.RawState), ",")
+				val := ""
+				for i := 0; i < len(stra); i++ {
+					if strings.Index(stra[i], "\"text\":") == 0 {
+						val = stra[i]
+						break
+					}
+				}
+				vals := strings.Split(val, ":")
+				ruleName := strings.Replace(vals[1], "\"", "", -1)
+				userInt := checkUsers(callback.User.ID)
+				udata[userInt].HOST = hostCheck(ruleName)
+
+				text := "<@" + udata[userInt].ID + "> " + ruleName + " : host set"
+				udata[userInt].PWD = setHome()
+				writeUsersData()
+
+				_, _, err := api.PostMessage(callback.Channel.GroupConversation.Conversation.ID, slack.MsgOptionText(text, false))
+				if err != nil {
+					fmt.Printf("failed posting message: %v", err)
+				}
+
+				debugLog(callback.User.ID + " : select " + strings.Replace(vals[1], "\"", "", -1))
+
+				client.Ack(*evt.Request)
 			default:
 				fmt.Fprintf(os.Stderr, "Unexpected event type received: %s\n", evt.Type)
 			}
@@ -346,6 +437,23 @@ func returnAlias(userInt int) string {
 	return strs
 }
 
+func returnHosts() string {
+	strs := ""
+	for i := 0; i < len(hosts); i++ {
+		s := strconv.Itoa(i + 1)
+		strs = strs + "[" + s + "] " + hosts[i].RULE + ": " + hosts[i].HOST + " " + hosts[i].PORT + " " + hosts[i].USER + " " + hosts[i].SHEBANG + "\n"
+	}
+	return strs
+}
+
+func returnRules() []string {
+	var strs []string
+	for i := 0; i < len(hosts); i++ {
+		strs = append(strs, hosts[i].RULE)
+	}
+	return strs
+}
+
 func replaceAlias(userInt int, command string) string {
 	for i := 0; i < len(udata[userInt].ALIAS); i++ {
 		stra := strings.Split(udata[userInt].ALIAS[i], "=")
@@ -387,6 +495,9 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 	if allowUser(User) == false {
 		trueFalse = false
 		data = User + " : user not allow"
+		if secAlert == true {
+			data = data + "\n [Security Alert!] " + alertUsers()
+		}
 	} else if strings.Index(Command, "alias") == 0 {
 		if Command == "alias" {
 			strs := returnAlias(userInt)
@@ -402,30 +513,47 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 				deleteAlias(userInt, Command)
 				trueFalse = true
 				data = "<@" + udata[userInt].ID + "> " + Command + " : alias delete"
+				writeUsersData()
 			} else {
 				Command := strings.Replace(Command, "alias ", "", 1)
 				udata[userInt].ALIAS = append(udata[userInt].ALIAS, Command)
 				trueFalse = true
 				data = "<@" + udata[userInt].ID + "> " + Command + " : alias set"
+				writeUsersData()
 			}
 		} else {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> " + Command + " : alias set fail"
 		}
-	} else if strings.Index(Command, "SETHOST=") == 0 {
-		stra := strings.Split(Command, "SETHOST=")
-		hostInt := hostCheck(stra[1])
-		if hostInt == -1 {
-			debugLog("Error: host not found. " + User + " " + Command)
 
-			trueFalse = false
-			data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not found"
-		} else {
-			udata[userInt].HOST = hostInt
-
-			trueFalse = true
-			data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host set"
+	} else if strings.Index(Command, "SETHOST") == 0 {
+		if Command == "SETHOST" {
+			strs := returnHosts()
+			if len(strs) == 0 {
+				strs = "no hosts!"
+			}
+			return true, "<@" + udata[userInt].ID + ">\n```\n" + strs + "```"
 		}
+		if strings.Index(Command, "SETHOST=") == 0 {
+			stra := strings.Split(Command, "SETHOST=")
+			hostInt := hostCheck(stra[1])
+			if hostInt == -1 {
+				debugLog("Error: host not found. " + User + " " + Command)
+
+				trueFalse = false
+				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not found"
+			} else {
+				udata[userInt].HOST = hostInt
+
+				trueFalse = true
+				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host set"
+				udata[userInt].PWD = setHome()
+				writeUsersData()
+			}
+		}
+	} else if strings.Index(Command, "UPLOAD=") == 0 {
+		stra := strings.Split(Command, "UPLOAD=")
+		trueFalse, data = uploadFile(userInt, stra[1])
 	} else {
 		if checkHost(User) == true {
 			Command = replaceAlias(userInt, Command)
@@ -436,6 +564,122 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 		}
 	}
 	return trueFalse, data
+}
+
+func uploadFile(userInt int, path string) (bool, string) {
+	api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
+	params := slack.GetFilesParameters{
+		User:  udata[userInt].ID,
+		Count: 1,
+	}
+
+	files, _, err := api.GetFiles(params)
+	if err != nil || len(files) == 0 {
+		fmt.Println(err)
+		return false, "get files error"
+	}
+
+	file, err := os.Create(files[0].Name)
+	if err != nil {
+		fmt.Println(err)
+		return false, "file not create: " + files[0].Name
+	}
+
+	error := api.GetFile(files[0].URLPrivateDownload, file)
+	if err != nil {
+		fmt.Println(error)
+		return false, "file not download: " + files[0].Name
+	}
+
+	file.Close()
+
+	if len(path) == 0 {
+		path = udata[userInt].PWD
+	}
+
+	if scpDo(udata[userInt].HOST, files[0].Name, path) == false {
+		return false, "file not scp: " + files[0].Name
+	}
+
+	if err := os.Remove(files[0].Name); err != nil {
+		fmt.Println(err)
+	}
+
+	if delUpload == true {
+		err = api.DeleteFile(files[0].ID)
+		if err != nil {
+			fmt.Printf("%s\n", err)
+			return false, "file upload success and file not delete on slack: " + files[0].Name
+		}
+	}
+
+	return true, "file upload success: " + files[0].Name
+}
+
+func writeUsersData() {
+	if autoRW == true && Exists(lockFile) == false {
+		lfile, err := os.Create(lockFile)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		lfile.Close()
+
+		const layout = "2006-01-02_15"
+		t := time.Now()
+		if err := os.Rename(configFile, configFile+"_"+t.Format(layout)); err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		file, err := os.Create(configFile)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		defer file.Close()
+
+		_, err = file.WriteString("[ALERT]\n")
+		for i := 0; i < len(alerts); i++ {
+			_, err = file.WriteString(alerts[i] + "\n")
+		}
+
+		_, err = file.WriteString("[ALLOWID]\n")
+		for i := 0; i < len(users); i++ {
+			_, err = file.WriteString(users[i] + "\n")
+		}
+
+		_, err = file.WriteString("[REJECT]\n")
+		for i := 0; i < len(rejects); i++ {
+			_, err = file.WriteString(rejects[i] + "\n")
+		}
+
+		_, err = file.WriteString("[HOSTS]\n")
+		for i := 0; i < len(hosts); i++ {
+			_, err = file.WriteString(hosts[i].RULE + "\t" + hosts[i].HOST + "\t" + hosts[i].PORT + "\t" + hosts[i].USER + "\t" + hosts[i].PASSWD + "\t" + hosts[i].SHEBANG + "\n")
+		}
+
+		_, err = file.WriteString("[USERS]\n")
+		for i := 0; i < len(udata); i++ {
+			aliasStr := getAliasToStr(udata[i].ALIAS)
+			_, err = file.WriteString(udata[i].ID + "\t" + udata[i].PWD + "\t" + strconv.Itoa(udata[i].HOST) + "\t" + aliasStr + "\n")
+		}
+
+		if err := os.Remove(lockFile); err != nil {
+			fmt.Println(err)
+		}
+		return
+	}
+}
+
+func getAliasToStr(strAll []string) string {
+	strs := ""
+	for i := 0; i < len(strAll); i++ {
+		if len(strAll[i]) > 0 {
+			strs = strs + "\t" + strAll[i]
+		}
+	}
+	return strs
 }
 
 func debugLog(message string) {
@@ -487,23 +731,27 @@ func writeFile(filename, stra string, userInt int, dirFlag bool) bool {
 	return true
 }
 
-func loadConfig(filename, decryptstr string, plainpassword bool) {
+func loadConfig(decryptstr string, plainpassword bool, checkRules bool) {
 	loadOptions := ini.LoadOptions{}
-	loadOptions.UnparseableSections = []string{"ALLOWID", "REJECT", "HOSTS"}
+	loadOptions.UnparseableSections = []string{"ALERT", "ALLOWID", "REJECT", "HOSTS", "USERS"}
 
-	cfg, err := ini.LoadSources(loadOptions, filename)
+	cfg, err := ini.LoadSources(loadOptions, configFile)
 	if err != nil {
 		fmt.Printf("Fail to read config file: %v", err)
 		os.Exit(1)
 	}
 
+	alerts = nil
 	users = nil
 	rejects = nil
 	hosts = nil
+	udata = nil
 
+	setSingleConfigStrs(&alerts, "ALERT", cfg.Section("ALERT").Body())
 	setSingleConfigStrs(&users, "ALLOWID", cfg.Section("ALLOWID").Body())
 	setSingleConfigStrs(&rejects, "REJECT", cfg.Section("REJECT").Body())
-	setSingleConfigHosts(&hosts, "HOSTS", cfg.Section("HOSTS").Body(), decryptstr, plainpassword)
+	setSingleConfigHosts(&hosts, "HOSTS", cfg.Section("HOSTS").Body(), decryptstr, plainpassword, checkRules)
+	setUsersData("USERS", cfg.Section("USERS").Body())
 }
 
 func setSingleConfigStrs(config *[]string, configType, datas string) {
@@ -517,28 +765,59 @@ func setSingleConfigStrs(config *[]string, configType, datas string) {
 	}
 }
 
-func setSingleConfigHosts(config *[]hostsData, configType, datas, decryptstr string, plainpassword bool) {
+func setUsersData(configType, datas string) {
+	var aliasStrs []string
 	debugLog(" -- " + configType + " --")
 
 	for _, v := range regexp.MustCompile("\r\n|\n\r|\n|\r").Split(datas, -1) {
 		if len(v) > 0 {
-			if strings.Index(v, ",") != -1 {
-				strs := strings.Split(v, ",")
+			if strings.Index(v, "\t") != -1 {
+				strs := strings.Split(v, "\t")
+				convInt, err := strconv.Atoi(strs[2])
+
+				if len(strs) > 3 {
+					for i := 3; i < len(strs); i++ {
+						aliasStrs = append(aliasStrs, strs[i])
+					}
+				}
+
+				if err == nil {
+					udata = append(udata, userData{ID: strs[0], PWD: strs[1], HOST: convInt, ALIAS: aliasStrs})
+				}
+			}
+		}
+		debugLog(v)
+	}
+}
+
+func setSingleConfigHosts(config *[]hostsData, configType, datas, decryptstr string, plainpassword, checkRules bool) {
+	debugLog(" -- " + configType + " --")
+
+	for _, v := range regexp.MustCompile("\r\n|\n\r|\n|\r").Split(datas, -1) {
+		if len(v) > 0 {
+			if strings.Index(v, "\t") != -1 {
+				strs := strings.Split(v, "\t")
 				pass := ""
 				if plainpassword == true || Exists(strs[4]) == true {
 					pass = strs[4]
 				} else {
 					passTmp, err := decrypt(strs[4], []byte(decryptstr))
 					if err != nil {
-						fmt.Println("ERROR: not password decrypt!")
+						fmt.Println("WARN: not password decrypt!: ", strs[4])
 						fmt.Println(err)
-						os.Exit(1)
 					}
 					pass = passTmp
 				}
-				*config = append(*config, hostsData{RULE: strs[0], HOST: strs[1], PORT: strs[2], USER: strs[3], PASSWD: pass, SHEBANG: strs[5]})
 
-				debugLog(strs[0] + " " + strs[1] + " " + strs[2] + " " + strs[3] + " " + pass + " " + strs[5])
+				if checkRules == true {
+					_, done, err := sshDo(strs[3], strs[1], pass, strs[2], "cd")
+					if done == false || err != nil {
+						debugLog("RULE: " + strs[0] + " connect fail! " + strs[3] + " " + strs[1] + " " + pass + " " + strs[2])
+					} else {
+						debugLog("add RULE: " + strs[0] + " " + strs[3] + " " + strs[1] + " " + pass + " " + strs[2])
+						*config = append(*config, hostsData{RULE: strs[0], HOST: strs[1], PORT: strs[2], USER: strs[3], PASSWD: pass, SHEBANG: strs[5]})
+					}
+				}
 			}
 		}
 	}
@@ -594,8 +873,15 @@ func checkUsers(User string) int {
 		}
 	}
 
-	udata = append(udata, userData{ID: User, HOST: -1, PWD: os.Getenv("HOME"), ALIAS: nil})
+	udata = append(udata, userData{ID: User, HOST: -1, PWD: setHome(), ALIAS: nil})
 	return len(udata) - 1
+}
+
+func setHome() string {
+	if len(os.Getenv("HOME")) == 0 {
+		return os.Getenv("HOMEPATH")
+	}
+	return os.Getenv("HOME")
 }
 
 func checkHost(User string) bool {
@@ -678,7 +964,11 @@ func checkPreExecuter(User, Command string, hostInt int, channel string) (bool, 
 	for i := 0; i < len(rejects); i++ {
 		if strings.Index(Command, rejects[i]) != -1 {
 			fmt.Println("Error: include reject string. ", User, Command)
-			return false, "include reject string!"
+			strs := "include reject string!"
+			if secAlert == true {
+				strs = strs + "\n [Security Alert!] " + alertUsers()
+			}
+			return false, strs
 		}
 	}
 
@@ -698,6 +988,23 @@ func checkPreExecuter(User, Command string, hostInt int, channel string) (bool, 
 	}
 
 	return true, User + ":" + Command
+}
+
+func alertUsers() string {
+	strs := ""
+	for i := 0; i < len(alerts); i++ {
+		switch alerts[i] {
+		case "here":
+			strs = strs + " <!here>"
+		case "channel":
+			strs = strs + " <!channnel>"
+		case "everyone":
+			strs = strs + " <!everyone>"
+		default:
+			strs = strs + " <@" + alerts[i] + ">"
+		}
+	}
+	return strs
 }
 
 func upload(userInt int, Command, channel string) bool {
@@ -763,7 +1070,7 @@ func executer(userInt, hostInt int, Command, channel string) string {
 
 		scpFlag := false
 		for i := 0; i < RETRY; i++ {
-			if scpDo(hostInt, tmpFile+".bat") == true {
+			if scpDo(hostInt, tmpFile+".bat", ".") == true {
 				scpFlag = true
 				break
 			}
@@ -780,7 +1087,7 @@ func executer(userInt, hostInt int, Command, channel string) string {
 	done := false
 	strs := ""
 	for i := 0; i < RETRY; i++ {
-		strs, done, err = sshDo(hostInt, sshCommand)
+		strs, done, err = sshDo(hosts[hostInt].USER, hosts[hostInt].HOST, hosts[hostInt].PASSWD, hosts[hostInt].PORT, sshCommand)
 		if done == true && len(strs) > 0 {
 			if strings.Count(strs, "\n") > toFile {
 				writeFile(tmpFile+".txt", prompt+strs, userInt, false)
@@ -803,37 +1110,49 @@ func executer(userInt, hostInt int, Command, channel string) string {
 	if err == nil && strings.Index(Command, "cd ") == 0 {
 		stra := strings.Split(Command, "cd ")
 		udata[userInt].PWD = stra[1]
+		writeUsersData()
 	}
 
 	if len(strs) > 1 {
-		return "<@" + udata[userInt].ID + ">\n```\n" + prompt + strs + "```"
+		return "<@" + udata[userInt].ID + ">\n```\n" + prompt + convertChar(strs) + "```"
 	}
 	return "<@" + udata[userInt].ID + ">\n```\n" + prompt + "```"
 }
 
-func sshDo(hostInt int, Command string) (string, bool, error) {
+func convertChar(strs string) string {
+	detector := chardet.NewTextDetector()
+	result, err := detector.DetectBest([]byte(strs))
+	if err == nil {
+		if result.Charset == "Shift_JIS" {
+			return sjis_to_utf8(strs)
+		}
+	}
+	return strs
+}
+
+func sshDo(User, Host, Passwd, Port, Command string) (string, bool, error) {
 	ssh := &easyssh.MakeConfig{
-		User:     hosts[hostInt].USER,
-		Server:   hosts[hostInt].HOST,
-		Password: hosts[hostInt].PASSWD,
-		Port:     hosts[hostInt].PORT,
-		Timeout:  60 * time.Second,
+		User:     User,
+		Server:   Host,
+		Password: Passwd,
+		Port:     Port,
+		Timeout:  time.Duration(sshTimeout) * time.Second,
 	}
 
-	if Exists(hosts[hostInt].PASSWD) == true {
+	if Exists(Passwd) == true {
 		ssh = &easyssh.MakeConfig{
-			User:       hosts[hostInt].USER,
-			Server:     hosts[hostInt].HOST,
-			KeyPath:    hosts[hostInt].PASSWD,
-			Port:       hosts[hostInt].PORT,
-			Timeout:    60 * time.Second,
+			User:       User,
+			Server:     Host,
+			KeyPath:    Passwd,
+			Port:       Port,
+			Timeout:    time.Duration(sshTimeout) * time.Second,
 			Passphrase: "",
 		}
 	}
 
 	debugLog("ssh: " + Command)
 
-	stdout, stderr, done, err := ssh.Run(Command, 60*time.Second)
+	stdout, stderr, done, err := ssh.Run(Command, 30*time.Second)
 
 	debugLog("stdout is :" + stdout + ";   stderr is :" + stderr)
 
@@ -849,7 +1168,7 @@ func sshDo(hostInt int, Command string) (string, bool, error) {
 	return " ", done, err
 }
 
-func scpDo(hostInt int, tmpFile string) bool {
+func scpDo(hostInt int, tmpFile, path string) bool {
 	config := &ssh.ClientConfig{
 		User:            hosts[hostInt].USER,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
@@ -890,7 +1209,7 @@ func scpDo(hostInt int, tmpFile string) bool {
 		fmt.Print(err.Error())
 		return false
 	}
-	err = scp.CopyPath(tmpFile, ".", session)
+	err = scp.CopyPath(tmpFile, path, session)
 	if err != nil {
 		fmt.Print(err.Error())
 		return false
@@ -956,4 +1275,15 @@ func addSpace(strs string) string {
 		strs += "0"
 	}
 	return strs
+}
+
+//FYI: https://qiita.com/uchiko/items/1810ddacd23fd4d3c934
+// ShiftJIS から UTF-8
+func sjis_to_utf8(str string) string {
+	ret, err := ioutil.ReadAll(transform.NewReader(strings.NewReader(str), japanese.ShiftJIS.NewDecoder()))
+	if err != nil {
+		fmt.Printf("Convert Error: %s\n", err)
+		return ""
+	}
+	return string(ret)
 }
