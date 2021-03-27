@@ -35,6 +35,18 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- ログ出力をつける<br>
 		- systemdに登録した時にログが残しずらいのでログ出力モードをつけました 
 
+- v0.4<br>
+	- 設定をエクスポートして永続化<br>
+		- アクセス先やディレクトリ、alias定義を変更時にコンフィグに書き出すようにしました
+	- もっとセキュリティ的につよく<br>
+		- 禁止コマンドを実行したときに、アラートとしてメンションを飛ばすようにしました
+	- アップロードに対応<br>
+		- 直前にslackにあげたファイルをサーバー側にアップロードできるようにしました
+	- ホスト選択のインタラクティブメッセージ化<br>
+		- アクセス先の切り替えを分かりやすく、インタラクティブ化しました
+	- ホスト定義の自動チェックモード追加<br>
+		- コンフィグ読み込み時にホスト定義がアクセス可能かどうかチェックするようにしました
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -80,9 +92,8 @@ go build slabot.go
 [この辺りを参考に設定していただければ](https://www.klab.com/jp/blog/tech/2021/0201-slack.html)<br>
 トークンの環境変数の設定は同じです。以下ソケットモードの設定が必要です。
 
-![socketmode](https://user-images.githubusercontent.com/22161385/111068211-3a0d0b80-850b-11eb-85b8-79744b081145.png)
 ![socktoken](https://user-images.githubusercontent.com/22161385/111068221-4002ec80-850b-11eb-9037-bb92495fd0b9.png)
-
+![socketmode](https://user-images.githubusercontent.com/22161385/111068211-3a0d0b80-850b-11eb-85b8-79744b081145.png)
 
 ### 注！ SlackにBotを許可する設定を入れる必要があります　(v0.2までのslack/eventsでインバウントでイベントを待ち受ける場合)
 
@@ -90,7 +101,7 @@ go build slabot.go
 トークンの環境変数の設定や、/slack/eventsに飛ばすところなんか同じです。以下スコープが必要です。
 
 ![hooktoken](https://user-images.githubusercontent.com/22161385/111068222-41ccb000-850b-11eb-9d64-dc91d11adce2.png)
-![scopes](https://user-images.githubusercontent.com/22161385/110207744-eaa25c00-7ec8-11eb-8cb2-f93e5e7fab5e.png)
+![scope](https://user-images.githubusercontent.com/22161385/112720472-ddb1df00-8f41-11eb-8cb8-37ee471c1dd1.png)
 
 ## 使い方
 
