@@ -135,8 +135,8 @@ go build slabot.go
 
 ![toSLACK](https://user-images.githubusercontent.com/22161385/112721551-c544c300-8f47-11eb-80d4-ea5ebf9504fb.png)
 
-- toSERVER=(アップ先)で**slackに最後にアップしたファイル**を接続しているサーバーにアップできます。(v0.4より)
-な
+- toSERVER=(アップ先)で**slackに最後にアップしたファイル**を接続しているサーバーにアップできます。(v0.4より)<br>
+
 ※(アップ先)はフォルダ名を指定します。画像の例のように . を指定した場合は**HOME**に配置されます。Windowsはフォルダ指定が難しいのでHOME移動させた方が良いかもしれない
 
 ![toSERVER](https://user-images.githubusercontent.com/22161385/112721553-c7a71d00-8f47-11eb-8982-161d89dfeb2a.png)
