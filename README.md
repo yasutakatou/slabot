@@ -224,8 +224,10 @@ rm
 passwd
 vi 
 [HOSTS]
-test,127.0.0.1,22,ec2-user,/home/ec2-user/test.pem,/bin/bash
+test	127.0.0.1	22	ec2-user	/home/ec2-user/test.pem	/bin/bash
 ```
+
+※v0.4からタブ区切りに変更されています
 
 ## 起動オプション
 
