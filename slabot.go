@@ -325,14 +325,12 @@ func socketMode() {
 				stra := strings.Split(string(callback.RawState), ",")
 				val := ""
 				for i := 0; i < len(stra); i++ {
-					fmt.Println(stra[i])
 					if strings.Index(stra[i], "\"text\":") == 0 {
 						val = stra[i]
 						break
 					}
 				}
 				vals := strings.Split(val, ":")
-				fmt.Println(vals)
 				ruleName := strings.Replace(vals[1], "\"", "", -1)
 				userInt := checkUsers(callback.User.ID)
 				udata[userInt].HOST = hostCheck(ruleName)
@@ -743,6 +741,7 @@ func loadConfig(decryptstr string, plainpassword bool, checkRules bool) {
 		os.Exit(1)
 	}
 
+	alerts = nil
 	users = nil
 	rejects = nil
 	hosts = nil
@@ -815,12 +814,10 @@ func setSingleConfigHosts(config *[]hostsData, configType, datas, decryptstr str
 					if done == false || err != nil {
 						debugLog("RULE: " + strs[0] + " connect fail! " + strs[3] + " " + strs[1] + " " + pass + " " + strs[2])
 					} else {
+						debugLog("add RULE: " + strs[0] + " " + strs[3] + " " + strs[1] + " " + pass + " " + strs[2])
 						*config = append(*config, hostsData{RULE: strs[0], HOST: strs[1], PORT: strs[2], USER: strs[3], PASSWD: pass, SHEBANG: strs[5]})
 					}
-
 				}
-
-				debugLog(strs[0] + " " + strs[1] + " " + strs[2] + " " + strs[3] + " " + pass + " " + strs[5])
 			}
 		}
 	}
@@ -1139,7 +1136,7 @@ func sshDo(User, Host, Passwd, Port, Command string) (string, bool, error) {
 		Server:   Host,
 		Password: Passwd,
 		Port:     Port,
-		Timeout:  sshTimeout * time.Second,
+		Timeout:  time.Duration(sshTimeout) * time.Second,
 	}
 
 	if Exists(Passwd) == true {
@@ -1148,7 +1145,7 @@ func sshDo(User, Host, Passwd, Port, Command string) (string, bool, error) {
 			Server:     Host,
 			KeyPath:    Passwd,
 			Port:       Port,
-			Timeout:    sshTimeout * time.Second,
+			Timeout:    time.Duration(sshTimeout) * time.Second,
 			Passphrase: "",
 		}
 	}
