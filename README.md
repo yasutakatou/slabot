@@ -98,7 +98,7 @@ go build slabot.go
 ### 注！ SlackにBotを許可する設定を入れる必要があります　(v0.2までのslack/eventsでインバウントでイベントを待ち受ける場合)
 
 [この辺りを参考に設定していただければ](https://qiita.com/frozenbonito/items/cf75dadce12ef9a048e9)<br>
-トークンの環境変数の設定や、/slack/eventsに飛ばすところなんか同じです。以下スコープが必要です。
+トークンの環境変数の設定や、/slack/eventsに飛ばすところなんか同じです。以下スコープが必要です(たぶん自信なし)。
 
 ![hooktoken](https://user-images.githubusercontent.com/22161385/111068222-41ccb000-850b-11eb-9d64-dc91d11adce2.png)
 ![scope](https://user-images.githubusercontent.com/22161385/112720472-ddb1df00-8f41-11eb-8cb8-37ee471c1dd1.png)
@@ -124,11 +124,22 @@ go build slabot.go
 
 ![viewname](https://user-images.githubusercontent.com/22161385/111068224-45f8cd80-850b-11eb-9240-b9bf3901b423.png)
 
+- v0.4より **RULES**でボットを呼ぶとインタラクティブにホストを切り替えられるようになりました！
+
+![2](https://user-images.githubusercontent.com/22161385/112720253-88290280-8f40-11eb-8974-d7cb8432a99a.png)
+![3](https://user-images.githubusercontent.com/22161385/112720256-89f2c600-8f40-11eb-9a89-d7c0511e2bdd.png)
+
 ### その他の使い方
 
-- UPLOAD=(ファイル名)でサーバー上のファイルをアップできます。
+- toSLACK=(ファイル名)でサーバー上のファイルをアップできます。
 
-![upload](https://user-images.githubusercontent.com/22161385/110207740-e4ac7b00-7ec8-11eb-8358-5133b984ec3d.png)
+![toSLACK](https://user-images.githubusercontent.com/22161385/112721551-c544c300-8f47-11eb-80d4-ea5ebf9504fb.png)
+
+- toSERVER=(アップ先)で**slackに最後にアップしたファイル**を接続しているサーバーにアップできます。(v0.4より)
+な
+※(アップ先)はフォルダ名を指定します。画像の例のように . を指定した場合は**HOME**に配置されます。Windowsはフォルダ指定が難しいのでHOME移動させた方が良いかもしれない
+
+![toSERVER](https://user-images.githubusercontent.com/22161385/112721553-c7a71d00-8f47-11eb-8982-161d89dfeb2a.png)
 
 - alias で長ったらしいコマンドの短縮名を付ける事ができます。
 
@@ -146,6 +157,12 @@ alias (**短縮名**)= ←空 でaliasを解除できます。
 
 #### v0.3より コンフィグファイルのホットリロードに対応しました。つまり、ファイルの変更を検知して自動で再読み込みします。
 
+- [ALERT]
+	- [REJECT]に定義した禁止コマンドを打った時にメンションで通報します
+		- SlackのメンバーIDか、here、channnel、everyoneが定義できます
+
+![1](https://user-images.githubusercontent.com/22161385/112720252-865f3f00-8f40-11eb-986a-58cd587776f1.png)
+
 - [ALLOWID]
 	- Botの使用を許可するSlackのメンバーIDを指定します。[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください
 		- U01NJBRKGLD
@@ -157,9 +174,9 @@ alias (**短縮名**)= ←空 でaliasを解除できます。
 メモ: どこに入ってても無条件で弾きます。 \`\` を使う場合や、ls ;　　　rm -rfみたいにシェルで表現できる事が多いのでうまくバリデーションできないからです
 
 - [HOSTS]
-	- 接続するホスト情報を定義します。以下のようにカンマ区切りで定義します。
+	- 接続するホスト情報を定義します。以下のように**タブ区切り**で定義します。
 	- 定義名,IP/名前解決できるホスト名,SSHのポート番号,ユーザー名,※認証情報,使用するシェルのパス
-	- test,127.0.0.1,22,slabot,secretpassword,/bin/bash
+	- test	127.0.0.1	22	slabot	secretpassword	/bin/bash
 	- この**定義名**を**SETHOST**の後に書くことでコマンドの投げ先をスイッチさせます
 
 ※認証情報　**平文のパスワード**、**暗号化されたパスワード文字列**、**認証鍵のファイル**の3つのどれかを指定します
@@ -173,6 +190,29 @@ alias (**短縮名**)= ←空 でaliasを解除できます。
 使用するシェルのパス(SHEBANG)に以下のようにcmd /Cを指定する事で対応できます。/Cが大文字なので注意！
 
 ![winshebang](https://user-images.githubusercontent.com/22161385/111068236-4f823580-850b-11eb-9bda-3e63fe38471c.png)
+
+- v0.4より コンフィグのテストが出来るようになりました！
+
+デバッグモードで以下のようにでます。sshに失敗するようならルールの定義から削除されます
+
+```
+ -- HOSTS --
+add RULE: windows fzk01 127.0.0.1 H7qZZ07bP4 22
+add RULE: pi1 ady 192.168.0.200 fzk01325@nifty.com 1880
+add RULE: pi2 pi 192.168.0.220 fzk01325@nifty.com 2880
+```
+
+※削除されて自動書き出しされた場合は定義が消えるので必要ならコンフィグのバックアップから再追記してください
+
+- v0.4より 設定の永続化ができるようになりました！
+
+コンフィグに以下のセクションが追加されています。こちらの後は各ユーザ事の定義が変更ドリブンで書き出され、永続化されます
+
+```
+[USERS]
+```
+
+※自動書き出し時には、自動でバックアップが出来ます。コンフィグ名に日付が追記されます
 
 ### コンフィグ記載例
 
@@ -193,22 +233,32 @@ test,127.0.0.1,22,ec2-user,/home/ec2-user/test.pem,/bin/bash
 
 ```
 Usage of slabot:
+  -alert
+        [-alert=not allow user or command send alert.(true is enable)] (default true)
   -api
         [-api=api mode (true is enable)]
+  -auto
+        [-auto=config auto read/write mode (true is enable)] (default true)
   -bot string
         [-bot=slack bot name (@ + name)] (default "slabot")
   -cert string
         [-cert=ssl_certificate file path (if you don't use https, haven't to use this option)] (default "localhost.pem")
+  -check
+        [-check=check rules. if connect fail to not use rule. (true is enable)] (default true)
   -config string
         [-config=config file)] (default ".slabot")
   -debug
         [-debug=debug mode (true is enable)]
   -decrypt string
         [-decrypt=password decrypt key string]
+  -delUpload
+        [-delUpload=file delete after upload (true is enable)]
   -encrypt string
         [-encrypt=password encrypt key string ex) pass:key (JUST ENCRYPT EXIT!)]
   -key string
         [-key=ssl_certificate_key file path (if you don't use https, haven't to use this option)] (default "localhost-key.pem")
+  -lock string
+        [-lock=lock file for auto read/write)] (default ".lock")
   -log
         [-log=logging mode (true is enable)]
   -plainpassword
@@ -221,9 +271,13 @@ Usage of slabot:
         [-retry=retry counts.] (default 10)
   -scp
         [-scp=need scp mode (true is enable)] (default true)
+  -timeout int
+        [-timeout=timeout count (second). ] (default 30)
   -toFile int
         [-toFile=if output over this value. be file.] (default 20)
 ```
+## -alert
+コンフィグの[ALERT]セクションの定義でアラートメンションを飛ばすのを有効かするかどうかです。デフォルトはtrueです。
 
 ### -api
 slackのボットじゃなくてrest apiサーバーを起動します。以下みたいにapiを投げられます。デフォルトはfalseです。
@@ -233,11 +287,17 @@ curl -k -H "Content-type: application/json" -X POST https://127.0.0.1:8080/api -
 curl -k -H "Content-type: application/json" -X POST https://127.0.0.1:8080/api -d '{"user":"C01N6M21555","command":"pwd"}'
 ```
 
+### -auto
+コンフィグの自動読み込み、書き出しを有効かするかどうかです。デフォルトはtrueです。
+
 ### -bot
 botの名前です。slackから呼び出すときの名前を指定します。デフォルトは**slabot**で、slackから @slabot で呼びます。
 
 ### -cert
 apiモードの時に指定する公開鍵ファイルです。
+
+### -check
+コンフィグ読み込み時にホスト定義が接続可能かチェックするモードです。デフォルトはtrueです。オフにすると起動が早くなります。
 
 ### -config
 読み込むコンフィグファイルを指定します。デフォルトは実行ファイルのカレントにある **.slabot** です。
@@ -247,6 +307,9 @@ apiモードの時に指定する公開鍵ファイルです。
 
 ### -decrypt
 コンフィグに**暗号化されたパスワード文字列**を使う場合に、**複合するためのキー**を指定します。
+
+### -delUpload
+サーバーにtoSERVERでアップロードした後にslack上のファイルを消すかどうかです。デフォルトはfalseです。
 
 ### -encrypt
 コンフィグに**暗号化されたパスワード文字列**を使う場合に、**パスワード**と**複合するためのキー**を指定して暗号文字を生成します。<br>
@@ -261,6 +324,9 @@ Encrypt: 5NVkTdvu5-g0pQCcy0RpOnxuaLFplSJZ0SIjtQqyVZKMGcFIuiY=
 
 ### -key
 apiモードの時に指定する秘密鍵ファイルです。
+
+### -lock
+コンフィグの自動読み込み、書き出しの時のロックファイル名です。書き出しと読み込みが衝突するのを防ぎます。共有ファイルシステム上でのバッティングを防ぎます。
 
 ### -log
 ログ出力モードです。デバッグログが以下のように年・月・日・時のフォーマットで出力されます。
@@ -284,16 +350,11 @@ scpでシェルを転送しないモードです。コマンドのみ流すの�
 が反面、使えるコマンドに**ダブルクォーテーション(")が使えなくなります**<br>
 @slabot echo "t e s t" > sample みたいなのが出来なくなるってことっすね。
 
+### -timeout
+sshでコマンドを投げた後のタイムアウト値です。デフォルトは**30**で30秒を越える場合はコマンド実行に失敗することになります。
+
 ### -toFile
 長い行数の出力をテキストファイルにして、アップロードする際の閾値になります。デフォルトは**20**で20行を越える場合にファイルに変換されます。
-
-## やっていき
-
--設定をエクスポートして永続化<br>
--もっとセキュリティ的につよく<br>
--アップロードに対応<br>
--ホスト選択のインタラクティブメッセージ化<br>
--アイコンとか選べるように<br>
 
 ## ライセンス
 
