@@ -551,8 +551,8 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 				writeUsersData()
 			}
 		}
-	} else if strings.Index(Command, "UPLOAD=") == 0 {
-		stra := strings.Split(Command, "UPLOAD=")
+	} else if strings.Index(Command, "toSERVER=") == 0 {
+		stra := strings.Split(Command, "toSERVER=")
 		trueFalse, data = uploadFile(userInt, stra[1])
 	} else {
 		if checkHost(User) == true {
@@ -972,11 +972,11 @@ func checkPreExecuter(User, Command string, hostInt int, channel string) (bool, 
 		}
 	}
 
-	if strings.Index(Command, "UPLOAD=") == 0 {
+	if strings.Index(Command, "toSLACK=") == 0 {
 		if upload(userInt, Command, channel) == false {
 			return false, "<@" + udata[userInt].ID + "> file upload fail"
 		} else {
-			return true, "<@" + udata[userInt].ID + "> alfile upload success"
+			return true, "<@" + udata[userInt].ID + "> file upload success"
 		}
 	} else {
 		strs := executer(userInt, hostInt, Command, channel)
