@@ -197,9 +197,9 @@ alias (**短縮名**)= ←空 でaliasを解除できます。
 
 ```
  -- HOSTS --
-add RULE: windows fzk01 127.0.0.1 H7qZZ07bP4 22
-add RULE: pi1 ady 192.168.0.200 fzk01325@nifty.com 1880
-add RULE: pi2 pi 192.168.0.220 fzk01325@nifty.com 2880
+add RULE: windows fzk01 127.0.0.1 *** 22
+add RULE: pi1 ady 192.168.0.200 *** 1880
+add RULE: pi2 pi 192.168.0.220 *** 2880
 ```
 
 ※削除されて自動書き出しされた場合は定義が消えるので必要ならコンフィグのバックアップから再追記してください
