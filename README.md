@@ -137,7 +137,7 @@ go build slabot.go
 
 - toSERVER=(アップ先)で**slackに最後にアップしたファイル**を接続しているサーバーにアップできます。(v0.4より)<br>
 
-※(アップ先)はフォルダ名を指定します。画像の例のように . を指定した場合は**HOME**に配置されます。Windowsはフォルダ指定が難しいのでHOME移動させた方が良いかもしれない
+※(アップ先)はフォルダ名を指定します。画像の例のように . を指定した場合は**HOME**に配置されます。Windowsはフォルダ指定が難しいので一旦HOMEに置いて移動させた方が良いかも
 
 ![toSERVER](https://user-images.githubusercontent.com/22161385/112721553-c7a71d00-8f47-11eb-8982-161d89dfeb2a.png)
 
@@ -217,14 +217,20 @@ add RULE: pi2 pi 192.168.0.220 *** 2880
 ### コンフィグ記載例
 
 ```
+[ALERT]
+U01NJBRKGLD
+here
 [ALLOWID]
 U01NJBRKGLD
 [REJECT]
 rm 
 passwd
-vi 
+vi
 [HOSTS]
-test	127.0.0.1	22	ec2-user	/home/ec2-user/test.pem	/bin/bash
+windows	127.0.0.1	22	fzk01	myPassword	cmd /C
+pi1	192.168.0.200	122	pi1	test.pem	/bin/ash
+pi2	192.168.0.220	222	pi2	test.pem	/bin/bash
+[USERS]
 ```
 
 ※v0.4からタブ区切りに変更されています
