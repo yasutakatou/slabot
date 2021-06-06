@@ -95,21 +95,62 @@ go build slabot.go
 
 バイナリをダウンロードして即使いたいなら[こっち](https://github.com/yasutakatou/slabot/releases)
 
-### 注！ SlackにSocketModeでBotを許可する設定を入れる必要があります(v0.3より)
+# セットアップの仕方
 
-[この辺りを参考に設定していただければ](https://www.klab.com/jp/blog/tech/2021/0201-slack.html)<br>
-トークンの環境変数の設定は同じです。以下ソケットモードの設定が必要です。
+このツールはslack側の実行許可が必要です。以下の設定をしてください
 
-![socktoken](https://user-images.githubusercontent.com/22161385/111068221-4002ec80-850b-11eb-9037-bb92495fd0b9.png)
-![socketmode](https://user-images.githubusercontent.com/22161385/111068211-3a0d0b80-850b-11eb-85b8-79744b081145.png)
+1. ツールをBotとして登録します
+- goto [slack api](https://api.slack.com/apps)
+- Create New(an) App
+	- define (Name)
+	- select (Workspce)
+	- Create App
+- App-Level Tokens
+	-Generate Token and Scopes
+	- define (Name)
+	- Add Scope
+		- connections:write
+	- Generate
+		- 後で使うのでxapp-から始まるトークンを控えてください
+	- Done
+- Socket Mode
+	- Enable Socket Mode
+		- On
+- OAuth & Permissions
+	- Scopes
+	- Bot Token Scopes
+		- app_mentions:read
+		- channels:history
+		- chat:write
+		- files:read
+		- files:write
+		- users:read
+	- Install to Workspace
+	- Bot User OAuth Token
+		- 後で使うのでxoxb-から始まるトークンを控えてください
+- Event Subscriptions
+	- Enable Events
+		- On
+	- Subscribe to bot events
+	- Add Bot User Event
+		- app_mentions:read
+		- channels:history
+	- Save Changes
 
-### 注！ SlackにBotを許可する設定を入れる必要があります　(v0.2までのslack/eventsでインバウントでイベントを待ち受ける場合)
+2. Slackのアプリからボットを使いたいチャンネルで招待してください
+	- invite bot
+		- @(ボットの名前)
+	- invite
 
-[この辺りを参考に設定していただければ](https://qiita.com/frozenbonito/items/cf75dadce12ef9a048e9)<br>
-トークンの環境変数の設定や、/slack/eventsに飛ばすところなんか同じです。以下スコープが必要です(たぶん自信なし)。
-
-![hooktoken](https://user-images.githubusercontent.com/22161385/111068222-41ccb000-850b-11eb-9d64-dc91d11adce2.png)
-![scope](https://user-images.githubusercontent.com/22161385/112720472-ddb1df00-8f41-11eb-8cb8-37ee471c1dd1.png)
+3. ターミナルからトークンの設定とツールを実行します
+	- set environment
+		- windows
+			- set SLACK_APP_TOKEN=xapp-...
+			- set SLACK_BOT_TOKEN=xoxb-...
+		- linux
+			- export SLACK_APP_TOKEN=xapp-...
+			- export SLACK_BOT_TOKEN=xoxb-...
+	- ツールを実行します
 
 ## 使い方
 
