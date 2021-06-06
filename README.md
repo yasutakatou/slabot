@@ -47,6 +47,14 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- ホスト定義の自動チェックモード追加<br>
 		- コンフィグ読み込み時にホスト定義がアクセス可能かどうかチェックするようにしました
 
+- v0.5<br>
+	- マルチタスクに対応<br>
+		- 重いタスク実行時に完了かタイムアウトまで次のコマンドが実行できなかったので平行できるようにしました
+	- リモートサーバーからのファイルアップに対応<br>
+		- コードを実行したサーバー上からファイルがアップできなかったのでリモートサーバーからバケツリレーするようにしました
+	- (無くなった機能)REST APIと旧来のBot機能を廃止し、socketmode一本に統一しました
+		- 開発時も使ってないのでメンテする意味も無いかなって
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -131,7 +139,9 @@ go build slabot.go
 
 ### その他の使い方
 
-- toSLACK=(ファイル名)でサーバー上のファイルをアップできます。
+- toSLACK=(ファイル名)でサーバー上のファイルをアップできます。 (v0.5からはコードを動かしているサーバーじゃなくて選択しているリモートからアップできるようにしました)
+
+今居るディレクトリパスを参照するのでパス指定せず、cdでディレクトリ移ってからファイル指定してください
 
 ![toSLACK](https://user-images.githubusercontent.com/22161385/112721551-c544c300-8f47-11eb-80d4-ea5ebf9504fb.png)
 
@@ -243,14 +253,10 @@ pi2	192.168.0.220	222	pi2	test.pem	/bin/bash
 Usage of slabot:
   -alert
         [-alert=not allow user or command send alert.(true is enable)] (default true)
-  -api
-        [-api=api mode (true is enable)]
   -auto
         [-auto=config auto read/write mode (true is enable)] (default true)
   -bot string
         [-bot=slack bot name (@ + name)] (default "slabot")
-  -cert string
-        [-cert=ssl_certificate file path (if you don't use https, haven't to use this option)] (default "localhost.pem")
   -check
         [-check=check rules. if connect fail to not use rule. (true is enable)] (default true)
   -config string
@@ -263,18 +269,12 @@ Usage of slabot:
         [-delUpload=file delete after upload (true is enable)]
   -encrypt string
         [-encrypt=password encrypt key string ex) pass:key (JUST ENCRYPT EXIT!)]
-  -key string
-        [-key=ssl_certificate_key file path (if you don't use https, haven't to use this option)] (default "localhost-key.pem")
   -lock string
         [-lock=lock file for auto read/write)] (default ".lock")
   -log
         [-log=logging mode (true is enable)]
   -plainpassword
         [-plainpassword=use plain text password (true is enable)]
-  -port string
-        [-port=port number] (default "8080")
-  -rest
-        [-rest=normal slack mode (true is enable)]
   -retry int
         [-retry=retry counts.] (default 10)
   -scp
@@ -284,25 +284,15 @@ Usage of slabot:
   -toFile int
         [-toFile=if output over this value. be file.] (default 20)
 ```
+
 ## -alert
 コンフィグの[ALERT]セクションの定義でアラートメンションを飛ばすのを有効かするかどうかです。デフォルトはtrueです。
-
-### -api
-slackのボットじゃなくてrest apiサーバーを起動します。以下みたいにapiを投げられます。デフォルトはfalseです。
-
-```
-curl -k -H "Content-type: application/json" -X POST https://127.0.0.1:8080/api -d '{"user":"C01N6M21555","command":"SETHOST=test"}'
-curl -k -H "Content-type: application/json" -X POST https://127.0.0.1:8080/api -d '{"user":"C01N6M21555","command":"pwd"}'
-```
 
 ### -auto
 コンフィグの自動読み込み、書き出しを有効かするかどうかです。デフォルトはtrueです。
 
 ### -bot
 botの名前です。slackから呼び出すときの名前を指定します。デフォルトは**slabot**で、slackから @slabot で呼びます。
-
-### -cert
-apiモードの時に指定する公開鍵ファイルです。
 
 ### -check
 コンフィグ読み込み時にホスト定義が接続可能かチェックするモードです。デフォルトはtrueです。オフにすると起動が早くなります。
@@ -330,9 +320,6 @@ Encrypt: 5NVkTdvu5-g0pQCcy0RpOnxuaLFplSJZ0SIjtQqyVZKMGcFIuiY=
 
 このオプションを指定した場合は、暗号文字生成後に実行終了します。(既に動いているプロセスには影響はない)
 
-### -key
-apiモードの時に指定する秘密鍵ファイルです。
-
 ### -lock
 コンフィグの自動読み込み、書き出しの時のロックファイル名です。書き出しと読み込みが衝突するのを防ぎます。共有ファイルシステム上でのバッティングを防ぎます。
 
@@ -343,12 +330,6 @@ apiモードの時に指定する秘密鍵ファイルです。
 
 ### -plainpassword
 パスワード平文モードです。trueにすると、コンフィグの認証情報部分の文字列を複合せずに平文のまま認証します。
-
-### -port
-動作するポート番号です。この設定はslack/apiモード両方で有効になります。
-
-### -rest
-v0.2までのslack/eventsでインバウントでイベントを受け取るモードです。デフォはfalseです。
 
 ### -retry
 内部でscp、sshをリトライする回数です。失敗時にリトライします。
@@ -367,4 +348,3 @@ sshでコマンドを投げた後のタイムアウト値です。デフォル�
 ## ライセンス
 
 BSD-2-Clause License, ISC License, BSD-3-Clause License,
-
