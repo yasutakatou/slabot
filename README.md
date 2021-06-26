@@ -221,32 +221,61 @@ alias (**短縮名**)= ←空 でaliasを解除できます。
 
 - [ALERT]
 	- [REJECT]に定義した禁止コマンドを打った時にメンションで通報します
-		- SlackのメンバーIDか、here、channnel、everyoneが定義できます
+		- SlackのユーザーIDか、here、channnel、everyoneが定義できます
 
 ![1](https://user-images.githubusercontent.com/22161385/112720252-865f3f00-8f40-11eb-986a-58cd587776f1.png)
 
-v0.5よりラベル化が出来ます。以下の場合、[REJECT]でescalation1ラベルを指定した
+v0.5よりラベル化が出来ます。以下の場合、[REJECT]でescalation1ラベルを指定した場合に次のタブ区切りで指定したユーザーにメンションされます
 
 ```
 [ALERT]
 escalation1	U024ZT3BHU5	here
 ```
 
+先頭のラベル以降はタブ区切りで複数ユーザーを指定できます。<br>
+ただし指定はユーザーのIDで指定してください。[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください
+
 - [ALLOWID]
-	- Botの使用を許可するSlackのメンバーIDを指定します。[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください
-		- U01NJBRKGLD
+	- Botの使用を許可するSlackのロールを指定します。
+
+```
+[ALLOWID]
+U024ZT3BHU5	hostlabel1	RW	rejectrule1
+```
+
+SlackのユーザーID、アクセス可能なホストのラベル、ファイルのアップロード・ダウンロードの権限、禁止操作をするルールのラベルを指定します。<br>
+ユーザーIDの指定は[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください。<br>
+ホストのラベルは[HOSTS]の定義の先頭と紐づきます。<br>
+RWの部分はRWか、Rか、その他が指定できます。RWはtoSLACK、toSERVER両方許可します。RはtoSLACKのみ。その他は両方使えません。<br>
+禁止操作をするルールのラベルは[REJECT]の先頭で指定するラベルになります
+
 - [REJECT]
 	- 実行を許可しないコマンド等の文字列を列記します。以下のように**文字列が入ってたら**弾きます。
 
 ![reject](https://user-images.githubusercontent.com/22161385/110207742-e8400200-7ec8-11eb-83ed-46777efac839.png)
 
+先頭はルールのラベルです。次はアラートするルールのラベル、その次からは実行を禁止するコマンドです。実行を禁止するコマンドはタブ区切りで複数を指定できます。<br>
+
+```
+[REJECT]
+rejectrule1	escalation1	rm	passwd	vi
+```
+
 メモ: どこに入ってても無条件で弾きます。 \`\` を使う場合や、ls ;　　　rm -rfみたいにシェルで表現できる事が多いのでうまくバリデーションできないからです
 
 - [HOSTS]
 	- 接続するホスト情報を定義します。以下のように**タブ区切り**で定義します。
-	- 定義名,IP/名前解決できるホスト名,SSHのポート番号,ユーザー名,※認証情報,使用するシェルのパス
-	- test	127.0.0.1	22	slabot	secretpassword	/bin/bash
+	- ラベル、定義名,IP/名前解決できるホスト名,SSHのポート番号,ユーザー名,※認証情報,使用するシェルのパス
+	- hostlabel1	test	127.0.0.1	22	slabot	secretpassword	/bin/bash
 	- この**定義名**を**SETHOST**の後に書くことでコマンドの投げ先をスイッチさせます
+
+[ALLOWID]で定義したラベル名と紐づきますのでユーザーごとに指定できるホストが制限できます。
+
+```
+[HOSTS]
+hostlabel1	pi1	192.168.0.1	22	pi1	myPassword1	/bin/bash
+hostlabel2	pi2	192.168.0.2	22	pi2	myPassword2	/bin/ash
+```
 
 ※認証情報　**平文のパスワード**、**暗号化されたパスワード文字列**、**認証鍵のファイル**の3つのどれかを指定します
 
@@ -287,18 +316,14 @@ add RULE: pi2 pi 192.168.0.220 *** 2880
 
 ```
 [ALERT]
-U01NJBRKGLD
-here
+escalation1	U024ZT3BHU5	here
 [ALLOWID]
-U01NJBRKGLD
+U024ZT3BHU5	hostlabel1	RW	rejectrule1
 [REJECT]
-rm 
-passwd
-vi
+rejectrule1	escalation1	rm	passwd	vi
 [HOSTS]
-windows	127.0.0.1	22	fzk01	myPassword	cmd /C
-pi1	192.168.0.200	122	pi1	test.pem	/bin/ash
-pi2	192.168.0.220	222	pi2	test.pem	/bin/bash
+hostlabel1	pi1	192.168.0.1	22	pi1	myPassword1	/bin/bash
+hostlabel2	pi2	192.168.0.2	22	pi2	myPassword2	/bin/ash
 [USERS]
 ```
 
