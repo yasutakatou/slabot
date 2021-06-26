@@ -652,7 +652,7 @@ func writeUsersData() {
 
 		_, err = file.WriteString("[REJECT]\n")
 		for i := 0; i < len(rejects); i++ {
-			_, err = file.WriteString(rejects[i].ALERT + "\t" + rejects[i].LABEL + "\t")
+			_, err = file.WriteString(rejects[i].LABEL + "\t" + rejects[i].ALERT + "\t")
 			for r := 0; r < len(rejects[i].COMMANDS); r++ {
 				if r == 0 {
 					_, err = file.WriteString(rejects[i].COMMANDS[r])
