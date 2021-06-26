@@ -55,6 +55,13 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- (無くなった機能)REST APIと旧来のBot機能を廃止し、socketmode一本に統一しました
 		- 開発時も使ってないのでメンテする意味も無いかなって
 
+- v0.6<br>
+	- 設定をラベル化して各ユーザーに細かいロールを付けれるようにしました
+		- アラートエスカレーション先のラベル化
+		- 使用許可するIDに使用不可コマンド、ファイルのダウンロード／アップロードの権限付与
+		- 使用禁止コマンドのラベル化
+		- アクセス可能ホストのラベル化
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -186,11 +193,15 @@ go build slabot.go
 
 ![toSLACK](https://user-images.githubusercontent.com/22161385/112721551-c544c300-8f47-11eb-80d4-ea5ebf9504fb.png)
 
+v0.5よりコンフィグでユーザー毎に機能の使用許可が割り振れます
+
 - toSERVER=(アップ先)で**slackに最後にアップしたファイル**を接続しているサーバーにアップできます。(v0.4より)<br>
 
 ※(アップ先)はフォルダ名を指定します。画像の例のように . を指定した場合は**HOME**に配置されます。Windowsはフォルダ指定が難しいので一旦HOMEに置いて移動させた方が良いかも
 
 ![toSERVER](https://user-images.githubusercontent.com/22161385/112721553-c7a71d00-8f47-11eb-8982-161d89dfeb2a.png)
+
+v0.5よりコンフィグでユーザー毎に機能の使用許可が割り振れます
 
 - alias で長ったらしいコマンドの短縮名を付ける事ができます。
 
@@ -213,6 +224,13 @@ alias (**短縮名**)= ←空 でaliasを解除できます。
 		- SlackのメンバーIDか、here、channnel、everyoneが定義できます
 
 ![1](https://user-images.githubusercontent.com/22161385/112720252-865f3f00-8f40-11eb-986a-58cd587776f1.png)
+
+v0.5よりラベル化が出来ます。以下の場合、[REJECT]でescalation1ラベルを指定した
+
+```
+[ALERT]
+escalation1	U024ZT3BHU5	here
+```
 
 - [ALLOWID]
 	- Botの使用を許可するSlackのメンバーIDを指定します。[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください
