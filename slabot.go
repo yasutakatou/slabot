@@ -337,7 +337,11 @@ func socketMode(sig chan string, api *slack.Client) {
 										return
 									}
 								} else {
-									_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText("Error: "+event.User+" use no rules.", false))
+									stra := "Error: <@" + event.User + "> use no rules."
+									if secAlert == true {
+										stra = stra + "\n [Security Alert!] " + alertUsers()
+									}
+									_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(stra, false))
 									if err != nil {
 										fmt.Printf("failed posting message: %v", err)
 									}
@@ -383,7 +387,7 @@ func socketMode(sig chan string, api *slack.Client) {
 				vals := strings.Split(val, ":")
 				ruleName := strings.Replace(vals[1], "\"", "", -1)
 				userInt := checkUsers(callback.User.ID)
-				udata[userInt].HOST = hostCheck(ruleName)
+				udata[userInt].HOST = hostCheck(ruleName, allows[userInt].LABEL)
 
 				text := "<@" + udata[userInt].ID + "> " + ruleName + " : host set"
 				udata[userInt].PWD = setHome()
@@ -516,8 +520,16 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 		}
 		if strings.Index(Command, "SETHOST=") == 0 {
 			stra := strings.Split(Command, "SETHOST=")
-			hostInt := hostCheck(stra[1])
-			if hostInt == -1 {
+			hostInt := hostCheck(stra[1], allows[userInt].LABEL)
+			if hostInt == -2 {
+				debugLog("Error: host not allow. " + User + " " + Command)
+
+				trueFalse = false
+				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not allow"
+				if secAlert == true {
+					data = data + "\n [Security Alert!] " + alertUsers()
+				}
+			} else if hostInt == -1 {
 				debugLog("Error: host not found. " + User + " " + Command)
 
 				trueFalse = false
@@ -1054,9 +1066,12 @@ func userCheck(User string) int {
 	return -1
 }
 
-func hostCheck(Host string) int {
+func hostCheck(Host, uLabel string) int {
 	for i := 0; i < len(hosts); i++ {
 		if hosts[i].RULE == Host {
+			if hosts[i].LABEL != uLabel {
+				return -2
+			}
 			return i
 		}
 	}
