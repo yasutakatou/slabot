@@ -62,6 +62,12 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 		- 使用禁止コマンドのラベル化
 		- アクセス可能ホストのラベル化
 
+- v0.7
+	- 定義名をIDじゃなくてユーザー名にしても名前解決できるようにしました
+		- IDで書いてあるとこれ誰用の定義だっけ？ってなってしまうのでユーザー名で書けるようにしました
+	- コマンドの先頭に#を付けることでscpしないで実行する高速実行モードをつけました
+		- scpでコマンド送ってから実行するのを、実行だけやるので倍速になります
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -185,6 +191,12 @@ go build slabot.go
 ![2](https://user-images.githubusercontent.com/22161385/112720253-88290280-8f40-11eb-8974-d7cb8432a99a.png)
 ![3](https://user-images.githubusercontent.com/22161385/112720256-89f2c600-8f40-11eb-9a89-d7c0511e2bdd.png)
 
+- v0.7より **#** を先頭につけることで、バッチをscpしてから実行するモードを直接実行する、-scp=falseにしたのと同じ高速実行モードにします
+
+![image](https://user-images.githubusercontent.com/22161385/126061864-40c30544-8477-4abc-bee5-0dfab4aa0f85.png)
+
+注) -scp=falseと同じでダブルクォーテーションがあるコマンドは実行できません
+
 ### その他の使い方
 
 - toSLACK=(ファイル名)でサーバー上のファイルをアップできます。 (v0.5からはコードを動かしているサーバーじゃなくて選択しているリモートからアップできるようにしました)
@@ -233,7 +245,8 @@ escalation1	U024ZT3BHU5	here
 ```
 
 先頭のラベル以降はタブ区切りで複数ユーザーを指定できます。<br>
-ただし指定はユーザーのIDで指定してください。[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください
+ただし指定はユーザーのIDで指定してください。[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください<br>
+v0.7より) 指定はユーザーIDだけでなく、**ユーザー名**で指定も出来ます
 
 - [ALLOWID]
 	- Botの使用を許可するSlackのロールを指定します。
@@ -247,7 +260,8 @@ SlackのユーザーID、アクセス可能なホストのラベル、ファイ�
 ユーザーIDの指定は[この辺りを参考](https://help.receptionist.jp/?p=1100)に確認してください。<br>
 ホストのラベルは[HOSTS]の定義の先頭と紐づきます。<br>
 RWの部分はRWか、Rか、その他が指定できます。RWはtoSLACK、toSERVER両方許可します。RはtoSLACKのみ。その他は両方使えません。<br>
-禁止操作をするルールのラベルは[REJECT]の先頭で指定するラベルになります
+禁止操作をするルールのラベルは[REJECT]の先頭で指定するラベルになります<br>
+v0.7より) 指定はユーザーIDだけでなく、**ユーザー名**で指定も出来ます
 
 - [REJECT]
 	- 実行を許可しないコマンド等の文字列を列記します。以下のように**文字列が入ってたら**弾きます。
@@ -329,6 +343,25 @@ hostlabel2	pi2	192.168.0.2	22	pi2	myPassword2	/bin/ash
 
 ※v0.4からタブ区切りに変更されています
 
+#### v0.7より
+
+v0.7から指定はユーザーIDだけでなく、**ユーザー名**で指定も出来ます
+
+```
+[ALERT]
+escalation1	adminuser	here
+[ALLOWID]
+adminuser	hostlabel1	RW	rejectrule1
+[REJECT]
+rejectrule1	escalation1	rm	passwd	vi
+[HOSTS]
+hostlabel1	pi1	192.168.0.1	22	pi1	myPassword1	/bin/bash
+hostlabel2	pi2	192.168.0.2	22	pi2	myPassword2	/bin/ash
+[USERS]
+U024ZT3BHU5	~/	0	
+
+```
+
 ## 起動オプション
 
 実行ファイルは以下、起動オプションがあります。
@@ -353,6 +386,8 @@ Usage of slabot:
         [-delUpload=file delete after upload (true is enable)]
   -encrypt string
         [-encrypt=password encrypt key string ex) pass:key (JUST ENCRYPT EXIT!)]
+  -idlookup
+        [-idlookup=resolve to ID definition (true is enable)] (default true)
   -lock string
         [-lock=lock file for auto read/write)] (default ".lock")
   -log
@@ -403,6 +438,9 @@ Encrypt: 5NVkTdvu5-g0pQCcy0RpOnxuaLFplSJZ0SIjtQqyVZKMGcFIuiY=
 ```
 
 このオプションを指定した場合は、暗号文字生成後に実行終了します。(既に動いているプロセスには影響はない)
+
+### -idlookup
+ユーザー名で定義しても、IDに名前解決して動作するモードです。v0.6まで) U024ZT3BHU5　→ v0.7から) adminuser
 
 ### -lock
 コンフィグの自動読み込み、書き出しの時のロックファイル名です。書き出しと読み込みが衝突するのを防ぎます。共有ファイルシステム上でのバッティングを防ぎます。
