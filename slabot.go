@@ -47,7 +47,6 @@ var (
 	secAlert   bool
 	debug      bool
 	logging    bool
-	needSCP    bool
 	delUpload  bool
 	sshTimeout int
 	RETRY      int
@@ -123,6 +122,7 @@ func main() {
 	_TOFILE := flag.Int("toFile", 20, "[-toFile=if output over this value. be file.]")
 	_sshTimeout := flag.Int("timeout", 30, "[-timeout=timeout count (second). ]")
 	_botName := flag.String("bot", "slabot", "[-bot=slack bot name (@ + name)]")
+	_IDLookup := flag.Bool("idlookup", true, "[-idlookup=resolve to ID definition (true is enable)]")
 
 	_autoRW := flag.Bool("auto", true, "[-auto=config auto read/write mode (true is enable)]")
 	_lockFile := flag.String("lock", ".lock", "[-lock=lock file for auto read/write)]")
@@ -132,7 +132,6 @@ func main() {
 	flag.Parse()
 
 	delUpload = bool(*_delUpload)
-	needSCP = bool(*_needSCP)
 	secAlert = bool(*_secAlert)
 	debug = bool(*_Debug)
 	logging = bool(*_Logging)
@@ -155,42 +154,6 @@ func main() {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-	}
-
-	if Exists(configFile) == true {
-		loadConfig(addSpace(*_decryptkey), *_plainpassword, *_checkRules)
-	} else {
-		fmt.Printf("Fail to read config file: %v\n", configFile)
-		os.Exit(1)
-	}
-
-	// creates a new file watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		fmt.Println("ERROR", err)
-	}
-	//defer watcher.Close()
-
-	if autoRW == true {
-		go func() {
-			for {
-				select {
-				case <-watcher.Events:
-					if Exists(lockFile) == false {
-						time.Sleep(1 * time.Second)
-						loadConfig(addSpace(*_decryptkey), *_plainpassword, false)
-					} else {
-						fmt.Println(" - config read locked! - ")
-					}
-				case <-watcher.Errors:
-					fmt.Println("ERROR", err)
-				}
-			}
-		}()
-	}
-
-	if err := watcher.Add(configFile); err != nil {
-		fmt.Println("ERROR", err)
 	}
 
 	appToken := os.Getenv("SLACK_APP_TOKEN")
@@ -220,7 +183,43 @@ func main() {
 		slack.OptionAppLevelToken(appToken),
 	)
 
-	go socketMode(sig, api)
+	if Exists(configFile) == true {
+		loadConfig(api, addSpace(*_decryptkey), *_plainpassword, *_checkRules, *_IDLookup)
+	} else {
+		fmt.Printf("Fail to read config file: %v\n", configFile)
+		os.Exit(1)
+	}
+
+	// creates a new file watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Println("ERROR", err)
+	}
+	//defer watcher.Close()
+
+	if autoRW == true {
+		go func() {
+			for {
+				select {
+				case <-watcher.Events:
+					if Exists(lockFile) == false {
+						time.Sleep(1 * time.Second)
+						loadConfig(api, addSpace(*_decryptkey), *_plainpassword, false, *_IDLookup)
+					} else {
+						fmt.Println(" - config read locked! - ")
+					}
+				case <-watcher.Errors:
+					fmt.Println("ERROR", err)
+				}
+			}
+		}()
+	}
+
+	if err := watcher.Add(configFile); err != nil {
+		fmt.Println("ERROR", err)
+	}
+
+	go socketMode(sig, api, *_needSCP)
 
 	go func() {
 		for {
@@ -274,7 +273,7 @@ func main() {
 	os.Exit(0)
 }
 
-func socketMode(sig chan string, api *slack.Client) {
+func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 	client := socketmode.New(
 		api,
 		socketmode.OptionDebug(debug),
@@ -347,7 +346,7 @@ func socketMode(sig chan string, api *slack.Client) {
 									}
 								}
 							} else {
-								trueFalse, text := eventSwitcher(sig, event.User, command, event.Channel, api)
+								trueFalse, text := eventSwitcher(sig, event.User, command, event.Channel, api, needSCP)
 
 								if trueFalse == false {
 									text = "Error: " + text
@@ -464,7 +463,7 @@ func unset(s []string, i int) []string {
 	return append(s[:i], s[i+1:]...)
 }
 
-func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Client) (bool, string) {
+func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Client, needSCP bool) (bool, string) {
 	userInt := checkUsers(User)
 
 	// for debug
@@ -557,7 +556,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 	} else {
 		if checkHost(User) == true {
 			Command = replaceAlias(userInt, Command)
-			trueFalse, data = checkPreExecuter(sig, User, Command, udata[userInt].HOST, channel, api)
+			trueFalse, data = checkPreExecuter(sig, User, Command, udata[userInt].HOST, channel, api, needSCP)
 		} else {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> " + Command + ": host not set"
@@ -752,7 +751,7 @@ func writeFile(filename, stra string, userInt int, dirFlag bool) bool {
 	return true
 }
 
-func loadConfig(decryptstr string, plainpassword bool, checkRules bool) {
+func loadConfig(api *slack.Client, decryptstr string, plainpassword bool, checkRules, idlookup bool) {
 	loadOptions := ini.LoadOptions{}
 	loadOptions.UnparseableSections = []string{"ALERT", "ALLOWID", "REJECT", "HOSTS", "USERS"}
 
@@ -762,20 +761,32 @@ func loadConfig(decryptstr string, plainpassword bool, checkRules bool) {
 		os.Exit(1)
 	}
 
+	usersMap := map[string]string{}
+
+	if idlookup == true {
+		users, err := api.GetUsers()
+		if err == nil {
+			for _, user := range users {
+				debugLog("UserIDs: " + user.ID + " " + user.Name)
+				usersMap[user.Name] = user.ID
+			}
+		}
+	}
+
 	alerts = nil
 	allows = nil
 	rejects = nil
 	hosts = nil
 	udata = nil
 
-	setStructs("ALERT", cfg.Section("ALERT").Body(), 0, "", false, false)
-	setStructs("ALLOWID", cfg.Section("ALLOWID").Body(), 1, "", false, false)
-	setStructs("REJECT", cfg.Section("REJECT").Body(), 2, "", false, false)
-	setStructs("HOSTS", cfg.Section("HOSTS").Body(), 3, decryptstr, plainpassword, checkRules)
-	setStructs("USERS", cfg.Section("USERS").Body(), 4, "", false, false)
+	setStructs("ALERT", cfg.Section("ALERT").Body(), 0, "", false, false, idlookup, usersMap)
+	setStructs("ALLOWID", cfg.Section("ALLOWID").Body(), 1, "", false, false, idlookup, usersMap)
+	setStructs("REJECT", cfg.Section("REJECT").Body(), 2, "", false, false, idlookup, usersMap)
+	setStructs("HOSTS", cfg.Section("HOSTS").Body(), 3, decryptstr, plainpassword, checkRules, idlookup, usersMap)
+	setStructs("USERS", cfg.Section("USERS").Body(), 4, "", false, false, idlookup, usersMap)
 }
 
-func setStructs(configType, datas string, flag int, decryptstr string, plainpassword, checkRules bool) {
+func setStructs(configType, datas string, flag int, decryptstr string, plainpassword, checkRules, idlookup bool, users map[string]string) {
 	cFlag := 0
 	debugLog(" -- " + configType + " --")
 
@@ -790,7 +801,7 @@ func setStructs(configType, datas string, flag int, decryptstr string, plainpass
 						var strr []string
 
 						for i := 1; i < len(strs); i++ {
-							strr = append(strr, strs[i])
+							strr = append(strr, setUserStr(idlookup, users, strs[i]))
 						}
 						alerts = append(alerts, alertData{LABEL: strs[0], USERS: strr})
 						debugLog(v)
@@ -808,7 +819,7 @@ func setStructs(configType, datas string, flag int, decryptstr string, plainpass
 						}
 
 						if pInt > -1 {
-							allows = append(allows, allowData{ID: strs[0], LABEL: strs[1], PERMISSION: pInt, REJECT: strs[3]})
+							allows = append(allows, allowData{ID: setUserStr(idlookup, users, strs[0]), LABEL: strs[1], PERMISSION: pInt, REJECT: strs[3]})
 							debugLog(v)
 						}
 					}
@@ -872,6 +883,18 @@ func setStructs(configType, datas string, flag int, decryptstr string, plainpass
 	}
 }
 
+func setUserStr(IDLookup bool, users map[string]string, key string) string {
+	if IDLookup == true {
+		us, ok := users[key]
+		if ok == true {
+			debugLog("Resove User: " + key + " -> " + us)
+			return us
+		}
+	}
+	debugLog("No Resolv:" + key)
+	return key
+}
+
 func Exists(filename string) bool {
 	_, err := os.Stat(filename)
 	return err == nil
@@ -927,7 +950,7 @@ func JsonResponseToByte(status, message string) []byte {
 	return []byte(outputJson)
 }
 
-func checkPreExecuter(sig chan string, User, Command string, hostInt int, channel string, api *slack.Client) (bool, string) {
+func checkPreExecuter(sig chan string, User, Command string, hostInt int, channel string, api *slack.Client, needSCP bool) (bool, string) {
 	userInt := userCheck(User)
 	if userInt == -1 {
 		debugLog("Error: user not found. " + User + " " + Command)
@@ -963,7 +986,7 @@ func checkPreExecuter(sig chan string, User, Command string, hostInt int, channe
 			return false, strs
 		}
 	} else {
-		go executer(sig, userInt, hostInt, Command, channel)
+		go executer(sig, userInt, hostInt, Command, channel, needSCP)
 	}
 
 	return true, ""
@@ -1078,7 +1101,12 @@ func hostCheck(Host, uLabel string) int {
 	return -1
 }
 
-func executer(sig chan string, userInt, hostInt int, Command, channel string) {
+func executer(sig chan string, userInt, hostInt int, Command, channel string, needSCP bool) {
+	if Command[0] == byte('#') && len(Command) > 1 {
+		Command = Command[1:]
+		debugLog("# is force no scp mode: " + Command)
+		needSCP = false
+	}
 	sshCommand := "cd " + udata[userInt].PWD + ";" + Command
 	tmpFile := "tmp." + allows[userInt].ID
 	if needSCP == true {
