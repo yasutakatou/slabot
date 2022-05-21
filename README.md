@@ -68,6 +68,16 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- コマンドの先頭に#を付けることでscpしないで実行する高速実行モードをつけました
 		- scpでコマンド送ってから実行するのを、実行だけやるので倍速になります
 
+- v0.8
+	- 許可されたコマンドだけ実行できる制限モードを付けました
+		- 禁止ワードを弾くと、反対の制限されたコマンドだけ実行できるモードでより細かくロールをつけれます
+	- 各アカウントに利用期限を設定出来るようにしました
+		- アカウントに有効期限の概念を入れました。これで未使用アカウントは自動的に無効化されます。
+	- 利用期限を定期的にレポートするようにしました
+		- 特定のチャンネルにレポートを送信し、棚卸出来るようにしました
+	- コンフィグを外から設定出来るようにADMINモードを付けました
+		- 設定ファイルを書き換えなくても設定変更出来るようにしました
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -205,7 +215,7 @@ go build slabot.go
 
 ![toSLACK](https://user-images.githubusercontent.com/22161385/112721551-c544c300-8f47-11eb-80d4-ea5ebf9504fb.png)
 
-v0.5よりコンフィグでユーザー毎に機能の使用許可が割り振れます
+v0.5よりコンフィグでユーザー毎にこの機能の使用許可が割り振れます
 
 - toSERVER=(アップ先)で**slackに最後にアップしたファイル**を接続しているサーバーにアップできます。(v0.4より)<br>
 
@@ -213,7 +223,7 @@ v0.5よりコンフィグでユーザー毎に機能の使用許可が割り振�
 
 ![toSERVER](https://user-images.githubusercontent.com/22161385/112721553-c7a71d00-8f47-11eb-8982-161d89dfeb2a.png)
 
-v0.5よりコンフィグでユーザー毎に機能の使用許可が割り振れます
+v0.5よりコンフィグでユーザー毎に機能のこの使用許可が割り振れます
 
 - alias で長ったらしいコマンドの短縮名を付ける事ができます。
 
@@ -224,6 +234,34 @@ alias (**短縮名**)=(**長ったらしいコマンド**)で登録できます�
 alias (**短縮名**)= ←空 でaliasを解除できます。
 
 ![alias2](https://user-images.githubusercontent.com/22161385/111068233-4a24eb00-850b-11eb-934b-d385eba8e51d.png)
+
+注) aliasは制限コマンドを回避出来てしまうため、制限モードのユーザーには使えません
+
+#### 特権モード (v0.8より)
+
+SLACK経由でコンフィグを書き換えられる特権モードです。<br>
+
+このモードはコンフィグの[ADMINS]に定義された特権アカウントのみ実行が可能です。<br>
+使い方としてコンフィグの**タブ区切り**を**カンマ**に書き換えてボットに投げます。<br>
+
+例１）
+![image](https://user-images.githubusercontent.com/22161385/169651436-9d6d1d1d-099c-4ea5-8efd-018252a6e640.png)
+例２）
+![image](https://user-images.githubusercontent.com/22161385/169651459-42f8bbf1-6eec-4c0e-a7c8-3f8e997b2c22.png)
+例３）
+![image](https://user-images.githubusercontent.com/22161385/169651474-db19e954-87b5-422b-a7c4-03a54d81ae7e.png)
+※平文でパスワード入れてますが、暗号化したものか、鍵認証にした方が良いです<br>
+
+二番目のパラメータに**DELETE**を指定、**三番目に定義済みのラベル**を指定すると定義を消せます
+
+例１）
+![image](https://user-images.githubusercontent.com/22161385/169651546-8cf4d929-adfe-4573-a4f2-950e7e923139.png)
+例２）
+![image](https://user-images.githubusercontent.com/22161385/169651512-1f1d1851-1343-4a74-a3d5-c000558c83be.png)
+
+そうでないアカウントが実行した場合はセキュリティアラートが発行されます。<br>
+
+![image](https://user-images.githubusercontent.com/22161385/169651384-47f41bcd-97a6-4475-9abc-1809ab7e3931.png)
 
 ## コンフィグファイル
 
@@ -253,7 +291,7 @@ v0.7より) 指定はユーザーIDだけでなく、**ユーザー名**で指�
 
 ```
 [ALLOWID]
-U024ZT3BHU5	hostlabel1	RW	rejectrule1
+user	hostlabel1	RW	allow	allowrule1	*
 ```
 
 SlackのユーザーID、アクセス可能なホストのラベル、ファイルのアップロード・ダウンロードの権限、禁止操作をするルールのラベルを指定します。<br>
@@ -261,10 +299,15 @@ SlackのユーザーID、アクセス可能なホストのラベル、ファイ�
 ホストのラベルは[HOSTS]の定義の先頭と紐づきます。<br>
 RWの部分はRWか、Rか、その他が指定できます。RWはtoSLACK、toSERVER両方許可します。RはtoSLACKのみ。その他は両方使えません。<br>
 禁止操作をするルールのラベルは[REJECT]の先頭で指定するラベルになります<br>
+つぎに**allow / reject**で制限モードを指定します。allowは許可されたコマンドだけ実行できます。リジェクトは逆で禁止されたコマンドは実行できません。<br>
+モードの指定の後に、制限モードに指定するルールラベル名を書きます。**allowなら[ALLOW]、rejectなら[REJECT]**からラベルを指定します。
+続いて使用期限を書きます。**YYYY/MM/DD** のフォーマットで書いてください。
+
 v0.7より) 指定はユーザーIDだけでなく、**ユーザー名**で指定も出来ます
+v0.8より）３つのパラメーターが追加されています。上記でいうところのRWの後の３個です。
 
 - [REJECT]
-	- 実行を許可しないコマンド等の文字列を列記します。以下のように**文字列が入ってたら**弾きます。
+	- **実行を許可しない**コマンド等の文字列を列記します。以下のように**文字列が入ってたら**弾きます。
 
 ![reject](https://user-images.githubusercontent.com/22161385/110207742-e8400200-7ec8-11eb-83ed-46777efac839.png)
 
@@ -326,6 +369,40 @@ add RULE: pi2 pi 192.168.0.220 *** 2880
 
 ※自動書き出し時には、自動でバックアップが出来ます。コンフィグ名に日付が追記されます
 
+- [ALLOW]
+	- **実行を許可したい**コマンド等の文字列を列記します。指定した文字、またはスペース付きの場合に許可します
+
+先頭はルールのラベルです。次はアラートするルールのラベル、その次からは実行を許可するコマンドです。実行を許可するコマンドはタブ区切りで複数を指定できます。<br>
+
+```
+[REJECT]
+allowrule1	escalation1	cd	ls	cat	ps	df	find
+```
+
+メモ: alias禁止と同様にパイプも使えません
+
+- [ADMINS]
+	- コンフィグを**SLACK経由で書き換えられる**特権IDを指定します
+
+ID名を書きます。改行区切りで複数指定できます。
+
+```
+[ADMINS]
+admin
+```
+
+- [REPORT]
+	- **定期的にアカウント使用期限をレポート**するチャンネル名を定義します
+
+チャンネル名を書きます。指定できるチャンネルは一つのみです。
+
+```
+[REPORT]
+C0256BTKP54
+```
+
+メモ: alias禁止と同様にパイプも使えません
+
 ### コンフィグ記載例
 
 ```
@@ -359,7 +436,35 @@ hostlabel1	pi1	192.168.0.1	22	pi1	myPassword1	/bin/bash
 hostlabel2	pi2	192.168.0.2	22	pi2	myPassword2	/bin/ash
 [USERS]
 U024ZT3BHU5	~/	0	
+```
 
+### v0.8より
+
+ここではv0.7からの変更点を書きます。
+[ALLOWID]のファイル操作権限の指定の後に、制限モードの指定、制限ルールの指定、アカウントの期限が追加されました。<br>
+[ALLOW]では[REJECT]と同じように許可するコマンドをタブ区切りで設定します。<br>
+[ADMINS]には特権コマンドを利用できるアカウントを指定します。<br>
+[REPORT]には定期リポートをアップするチャンネルIDを指定します。<br>
+
+```
+[ALERT]
+escalation1	adminuser	here
+[ALLOWID]
+user	hostlabel1	RW	allow	allowrule1	*
+admin	hostlabel1	RW	reject	rejectrule1	2022/05/24
+[REJECT]
+rejectrule1	escalation1	rm	passwd	vi
+[HOSTS]
+hostlabel1	pi1	192.168.0.1	22	pi1	myPassword1	/bin/bash
+hostlabel2	pi2	192.168.0.2	22	pi2	myPassword2	/bin/ash
+[USERS]
+U024ZT3BHU5	~/	0
+[ALLOW]
+allowrule1	escalation1	cd	ls	cat	ps	df	find
+[ADMINS]
+admin
+[REPORT]
+C0256BTKP54
 ```
 
 ## 起動オプション
@@ -392,6 +497,8 @@ Usage of slabot:
         [-lock=lock file for auto read/write)] (default ".lock")
   -log
         [-log=logging mode (true is enable)]
+  -loop int
+        [-loop=user check loop time (Hour). ] (default 24)
   -plainpassword
         [-plainpassword=use plain text password (true is enable)]
   -retry int
@@ -449,6 +556,9 @@ Encrypt: 5NVkTdvu5-g0pQCcy0RpOnxuaLFplSJZ0SIjtQqyVZKMGcFIuiY=
 ログ出力モードです。デバッグログが以下のように年・月・日・時のフォーマットで出力されます。
 
 ![logging](https://user-images.githubusercontent.com/22161385/111068741-61fd6e80-850d-11eb-8c4a-c890453bc251.png)
+
+### -loop
+コンフィグに指定したチャンネルにレポートをあげる時間の間隔です。単位は一時間でデフォルトは２４時間です。
 
 ### -plainpassword
 パスワード平文モードです。trueにすると、コンフィグの認証情報部分の文字列を複合せずに平文のまま認証します。
