@@ -244,19 +244,19 @@ SLACK経由でコンフィグを書き換えられる特権モードです。<br
 このモードはコンフィグの[ADMINS]に定義された特権アカウントのみ実行が可能です。<br>
 使い方としてコンフィグの**タブ区切り**を**カンマ**に書き換えてボットに投げます。<br>
 
-例１）
+例１）<br>
 ![image](https://user-images.githubusercontent.com/22161385/169651436-9d6d1d1d-099c-4ea5-8efd-018252a6e640.png)
-例２）
+例２）<br>
 ![image](https://user-images.githubusercontent.com/22161385/169651459-42f8bbf1-6eec-4c0e-a7c8-3f8e997b2c22.png)
-例３）
+例３）<br>
 ![image](https://user-images.githubusercontent.com/22161385/169651474-db19e954-87b5-422b-a7c4-03a54d81ae7e.png)
 ※平文でパスワード入れてますが、暗号化したものか、鍵認証にした方が良いです<br>
 
 二番目のパラメータに**DELETE**を指定、**三番目に定義済みのラベル**を指定すると定義を消せます
 
-例１）
+例１）<br>
 ![image](https://user-images.githubusercontent.com/22161385/169651546-8cf4d929-adfe-4573-a4f2-950e7e923139.png)
-例２）
+例２）<br>
 ![image](https://user-images.githubusercontent.com/22161385/169651512-1f1d1851-1343-4a74-a3d5-c000558c83be.png)
 
 そうでないアカウントが実行した場合はセキュリティアラートが発行されます。<br>
