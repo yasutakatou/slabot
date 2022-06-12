@@ -78,6 +78,11 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- コンフィグを外から設定出来るようにADMINモードを付けました
 		- 設定ファイルを書き換えなくても設定変更出来るようにしました
 
+- v0.9
+	- レポートがID表示で分かり辛かったので、表示名とメールアドレスも載せるようにしました
+
+![image](https://user-images.githubusercontent.com/22161385/173239603-ac4c25d5-500d-435c-95ed-647f2f1768d9.png)
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
