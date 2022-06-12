@@ -279,7 +279,7 @@ func main() {
 	}()
 
 	for {
-		time.Sleep(time.Hour * time.Duration(*_loop))
+		time.Sleep(time.Second * time.Duration(*_loop))
 		usercheck(api)
 	}
 	os.Exit(0)
@@ -291,11 +291,22 @@ func usercheck(api *slack.Client) {
 	strs := "[" + t.Format(layout) + "]\n"
 	for i := 0; i < len(allows); i++ {
 		if expireCheck(allows[i].EXPIRE) == true {
-			strs = strs + "User: " + allows[i].ID + " Not Expire: " + allows[i].EXPIRE + "\n"
-			debugLog("User: " + allows[i].ID + " Not Expire: " + allows[i].EXPIRE)
+			user, err := api.GetUserInfo(allows[i].ID)
+			if err != nil {
+				fmt.Printf("%s\n", err)
+			} else {
+				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Not Expire: " + allows[i].EXPIRE
+				debugLog(strs)
+			}
+
 		} else {
-			strs = strs + "User: " + allows[i].ID + " Expire: " + allows[i].EXPIRE + "\n"
-			debugLog("User: " + allows[i].ID + " Expire: " + allows[i].EXPIRE)
+			user, err := api.GetUserInfo(allows[i].ID)
+			if err != nil {
+				fmt.Printf("%s\n", err)
+			} else {
+				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Expire: " + allows[i].EXPIRE
+				debugLog(strs)
+			}
 		}
 	}
 
