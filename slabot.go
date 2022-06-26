@@ -8,6 +8,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	crt "crypto/rand"
@@ -28,7 +29,6 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
-	"github.com/appleboy/easyssh-proxy"
 	"github.com/blacknon/go-scplib"
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/crypto/ssh"
@@ -251,7 +251,6 @@ func main() {
 					tmpFile := "tmp." + strs[1]
 
 					if strings.Count(strs[3], "\n") > toFile {
-						fmt.Println("upload "+tmpFile+".txt", tmpFile+".txt", strs[0])
 						params := slack.FileUploadParameters{
 							Title:    "upload terminal",
 							Filetype: "txt",
@@ -279,7 +278,7 @@ func main() {
 	}()
 
 	for {
-		time.Sleep(time.Second * time.Duration(*_loop))
+		time.Sleep(time.Hour * time.Duration(*_loop))
 		usercheck(api)
 	}
 	os.Exit(0)
@@ -295,7 +294,7 @@ func usercheck(api *slack.Client) {
 			if err != nil {
 				fmt.Printf("%s\n", err)
 			} else {
-				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Not Expire: " + allows[i].EXPIRE
+				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Not Expire: " + allows[i].EXPIRE + "\n"
 				debugLog(strs)
 			}
 
@@ -304,7 +303,7 @@ func usercheck(api *slack.Client) {
 			if err != nil {
 				fmt.Printf("%s\n", err)
 			} else {
-				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Expire: " + allows[i].EXPIRE
+				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Expire: " + allows[i].EXPIRE + "\n"
 				debugLog(strs)
 			}
 		}
@@ -871,7 +870,17 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 	} else if strings.Index(Command, "toSERVER=") == 0 && udata[userInt].HOST != -1 {
 		if allows[userInt].PERMISSION == 2 {
 			stra := strings.Split(Command, "toSERVER=")
-			trueFalse, data = uploadFile(userInt, stra[1], api)
+
+			path := ""
+			if stra[1] == "." {
+				path = "."
+			} else if strings.Index(stra[1], "/") == 0 {
+				path = stra[1] + "/"
+			} else {
+				path = udata[userInt].PWD + "/" + stra[1] + "/"
+			}
+
+			trueFalse, data = uploadFile(userInt, path, api)
 		} else {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> : not allow upload"
@@ -882,6 +891,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 	} else if strings.Index(Command, "toSLACK=") == 0 && udata[userInt].HOST != -1 {
 		if allows[userInt].PERMISSION > 0 {
 			stra := strings.Split(Command, "toSLACK=")
+
 			if upload(udata[userInt].HOST, userInt, stra[1], channel, api) == false {
 				data = "<@" + udata[userInt].ID + "> file upload fail"
 				trueFalse = false
@@ -940,12 +950,7 @@ func uploadFile(userInt int, path string, api *slack.Client) (bool, string) {
 		fmt.Println(error)
 		return false, "file not download: " + files[0].Name
 	}
-
 	file.Close()
-
-	if len(path) == 0 {
-		path = udata[userInt].PWD
-	}
 
 	if scpDo(false, udata[userInt].HOST, files[0].Name, path) == false {
 		return false, "file not scp: " + files[0].Name
@@ -1484,7 +1489,15 @@ func alertUsers() string {
 }
 
 func upload(hostInt, userInt int, Command, channel string, api *slack.Client) bool {
-	filepath := udata[userInt].PWD + "/" + Command
+	filepath := ""
+	if strings.Index(Command, "/") == 0 {
+		filepath = Command
+		stra := strings.Split(Command, "/")
+		Command = stra[len(stra)-1]
+	} else {
+		filepath = udata[userInt].PWD + "/" + Command
+	}
+
 	if scpDo(true, hostInt, filepath, Command) == false {
 		return false
 	}
@@ -1543,14 +1556,34 @@ func hostCheck(Host, uLabel string) int {
 }
 
 func executer(sig chan string, userInt, hostInt int, Command, channel string, needSCP bool) {
+	prompt := "[@" + botName + " " + udata[userInt].PWD + "]$ " + Command + "\n"
+	done := false
+	strs := ""
+	dFlag := false
+
+	if strings.Index(Command, "pwd") == 0 {
+		sig <- channel + "\t" + udata[userInt].ID + "\t" + prompt + "\t" + udata[userInt].PWD
+		return
+	}
+
+	sshCommand := "cd " + udata[userInt].PWD + ";" + Command
+	tmpFile := "tmp." + allows[userInt].ID
+
+	var stra []string
+	if strings.Index(Command, "cd ") == 0 {
+		dFlag = true
+		stra = strings.Split(Command, "cd ")
+		if strings.Index(stra[1], "/") == 0 {
+			sshCommand = "cd " + stra[1]
+		} else {
+			sshCommand = "cd " + udata[userInt].PWD + "/" + stra[1]
+		}
+	}
+
 	if Command[0] == byte('#') && len(Command) > 1 {
 		Command = Command[1:]
 		debugLog("# is force no scp mode: " + Command)
-		needSCP = false
-	}
-	sshCommand := "cd " + udata[userInt].PWD + ";" + Command
-	tmpFile := "tmp." + allows[userInt].ID
-	if needSCP == true {
+	} else if needSCP == true {
 		writeFile(tmpFile+".bat", Command, userInt, true)
 
 		scpFlag := false
@@ -1566,34 +1599,26 @@ func executer(sig chan string, userInt, hostInt int, Command, channel string, ne
 			sig <- channel + "\t"
 			return
 		}
-		sshCommand = hosts[hostInt].SHEBANG + " " + tmpFile + ".bat"
+		sshCommand = hosts[hostInt].SHEBANG + " ~/" + tmpFile + ".bat"
 	}
 
-	var err error
-
-	prompt := "[@" + botName + " " + udata[userInt].PWD + "]$ " + Command + "\n"
-	done := false
-	strs := ""
 	for i := 0; i < RETRY; i++ {
-		strs, done, err = sshDo(hosts[hostInt].USER, hosts[hostInt].HOST, hosts[hostInt].PASSWD, hosts[hostInt].PORT, sshCommand, sshTimeout)
-		if done == true && len(strs) > 0 {
+		strs, done, _ = sshDo(hosts[hostInt].USER, hosts[hostInt].HOST, hosts[hostInt].PASSWD, hosts[hostInt].PORT, sshCommand, sshTimeout)
+		if done == true {
 			break
 		}
 	}
-	if done == false {
-		sig <- channel + "\t"
-		return
-	}
 
-	if strings.Index(Command, "pwd") == 0 {
+	if dFlag == true && done == true {
+		if strings.Index(stra[1], "/") == 0 {
+			udata[userInt].PWD = stra[1]
+		} else {
+			udata[userInt].PWD = udata[userInt].PWD + "/" + stra[1]
+		}
+
 		sig <- channel + "\t" + udata[userInt].ID + "\t" + prompt + "\t" + udata[userInt].PWD
-		return
-	}
-
-	if err == nil && strings.Index(Command, "cd ") == 0 {
-		stra := strings.Split(Command, "cd ")
-		udata[userInt].PWD = stra[1]
 		writeUsersData()
+		return
 	}
 
 	if len(strs) > 1 {
@@ -1616,45 +1641,64 @@ func convertChar(strs string) string {
 
 func sshDo(User, Host, Passwd, Port, Command string, timeouts int) (string, bool, error) {
 	timeout := time.Duration(sshTimeout) * time.Second
-	if timeouts != 0 {
-		timeout = time.Duration(timeouts) * time.Second
-	}
 
-	ssh := &easyssh.MakeConfig{
-		User:     User,
-		Server:   Host,
-		Password: Passwd,
-		Port:     Port,
-		Timeout:  timeout,
+	config := &ssh.ClientConfig{
+		User:            User,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Auth: []ssh.AuthMethod{
+			ssh.Password(Passwd),
+		},
+		Timeout: timeout,
 	}
 
 	if Exists(Passwd) == true {
-		ssh = &easyssh.MakeConfig{
-			User:       User,
-			Server:     Host,
-			KeyPath:    Passwd,
-			Port:       Port,
-			Timeout:    timeout,
-			Passphrase: "",
+		buf, err := ioutil.ReadFile(Passwd)
+		if err != nil {
+			fmt.Println(err)
+			return "", false, err
+		}
+		key, err := ssh.ParsePrivateKey(buf)
+		if err != nil {
+			fmt.Println(err)
+			return "", false, err
+		}
+		config = &ssh.ClientConfig{
+			User:            User,
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeys(key),
+			},
+			Timeout: timeout,
 		}
 	}
 
 	debugLog("ssh: " + Command)
 
-	stdout, stderr, done, err := ssh.Run(Command, timeout)
-
-	debugLog("stdout is :" + stdout + ";   stderr is :" + stderr)
-
-	if done == true {
-		if len(stdout) > 0 {
-			return stdout, done, err
-		} else if len(stderr) > 0 {
-			return stderr, done, err
-		} else {
-			return " ", done, err
-		}
+	conn, err := ssh.Dial("tcp", Host+":"+Port, config)
+	if err != nil {
+		fmt.Println(err)
+		return "", false, err
 	}
-	return " ", done, err
+	defer conn.Close()
+
+	session, err := conn.NewSession()
+	if err != nil {
+		fmt.Println(err)
+		return "", false, err
+	}
+	defer session.Close()
+
+	var b, e bytes.Buffer
+	session.Stdout = &b
+	session.Stderr = &e
+
+	debugLog("stdout is :" + b.String() + ";   stderr is :" + e.String())
+
+	if err := session.Run(Command); err != nil {
+		return e.String(), false, err
+	}
+
+	return b.String(), true, err
 }
 
 func scpDo(reverse bool, hostInt int, tmpFile, path string) bool {
@@ -1703,15 +1747,18 @@ func scpDo(reverse bool, hostInt int, tmpFile, path string) bool {
 		err = scp.PutFile([]string{tmpFile}, path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to scp put: %s\n", err)
+			scp.Connection.Close()
 			return false
 		}
 	} else {
 		err = scp.GetFile([]string{tmpFile}, path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to scp put: %s\n", err)
+			scp.Connection.Close()
 			return false
 		}
 	}
+	scp.Connection.Close()
 	return true
 }
 
