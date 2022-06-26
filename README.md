@@ -83,6 +83,15 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 ![image](https://user-images.githubusercontent.com/22161385/173239603-ac4c25d5-500d-435c-95ed-647f2f1768d9.png)
 
+- v0.99
+
+	- 実行したセッションが切れず残るバグを修正しました
+		- SSHの実行後にセッション終了処理が入って無かった・・汎ミスです
+	- フルパス指定で実行していたコマンドを相対的に実行できるようにしました（ファイルのアップロードも併せて対応)
+		- これまでファイル参照系コマンドはフルパスが基本でしたが、相対パスで実行できるようにしました。toSLACKコマンドもあわせて対応しました
+
+![image](https://user-images.githubusercontent.com/22161385/175811879-ab1a7a51-3759-4a3f-93b2-6a72608a2a04.png)
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
