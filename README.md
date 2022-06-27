@@ -92,6 +92,11 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 ![image](https://user-images.githubusercontent.com/22161385/175811879-ab1a7a51-3759-4a3f-93b2-6a72608a2a04.png)
 
+- v0.991
+
+	- cdする時に最後に / があると変なディレクトリ表示になる
+	- cd ../..とか複数指定の時にうまくcd出来ないバグをFIX
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
