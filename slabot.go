@@ -1569,18 +1569,22 @@ func executer(sig chan string, userInt, hostInt int, Command, channel string, ne
 	sshCommand := "cd " + udata[userInt].PWD + ";" + Command
 	tmpFile := "tmp." + allows[userInt].ID
 
+	if Command != "cd /" {
+		if Command[len(Command)-1] == 47 {
+			Command = Command[:len(Command)-1]
+		}
+	}
+
 	var stra []string
 	if strings.Index(Command, "cd ") == 0 {
 		dFlag = true
 		stra = strings.Split(Command, "cd ")
 		if strings.Index(stra[1], "/") == 0 {
-			sshCommand = "cd " + stra[1]
+			sshCommand = "cd " + stra[1] + " ; pwd"
 		} else {
-			sshCommand = "cd " + udata[userInt].PWD + "/" + stra[1]
+			sshCommand = "cd " + udata[userInt].PWD + "/" + stra[1] + " ; pwd"
 		}
-	}
-
-	if Command[0] == byte('#') && len(Command) > 1 {
+	} else if Command[0] == byte('#') && len(Command) > 1 {
 		Command = Command[1:]
 		debugLog("# is force no scp mode: " + Command)
 	} else if needSCP == true {
@@ -1610,11 +1614,7 @@ func executer(sig chan string, userInt, hostInt int, Command, channel string, ne
 	}
 
 	if dFlag == true && done == true {
-		if strings.Index(stra[1], "/") == 0 {
-			udata[userInt].PWD = stra[1]
-		} else {
-			udata[userInt].PWD = udata[userInt].PWD + "/" + stra[1]
-		}
+		udata[userInt].PWD = strings.TrimRight(strs, "\n")
 
 		sig <- channel + "\t" + udata[userInt].ID + "\t" + prompt + "\t" + udata[userInt].PWD
 		writeUsersData()
