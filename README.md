@@ -97,6 +97,10 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- cdする時に最後に / があると変なディレクトリ表示になる
 	- cd ../..とか複数指定の時にうまくcd出来ないバグをFIX
 
+- v0.992
+
+	- 他のユーザーのアカウント有効期間を参照しちゃうバグをFIX
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
