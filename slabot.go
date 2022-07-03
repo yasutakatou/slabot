@@ -328,6 +328,10 @@ func expireCheck(limit string) bool {
 	t, _ := time.Parse("2006/01/02", limit)
 	userLimit := t.In(jst).Unix()
 
+	//u := strconv.FormatInt(userLimit, 10)
+	//n := strconv.FormatInt(unixJST, 10)
+	//debugLog("User: " + u + " System: " + n)
+
 	if userLimit >= unixJST {
 		return true
 	}
@@ -1363,7 +1367,7 @@ func JsonResponseToByte(status, message string) []byte {
 }
 
 func checkPreExecuter(sig chan string, User, Command string, hostInt int, channel string, api *slack.Client, needSCP bool) (bool, string) {
-	userInt := userCheck(User)
+	userInt := userRuleCheck(User)
 	if userInt == -1 {
 		debugLog("Error: user not found. " + User + " " + Command)
 		return false, User + ": user not found"
@@ -1374,11 +1378,12 @@ func checkPreExecuter(sig chan string, User, Command string, hostInt int, channe
 		return false, "command sring not include"
 	}
 
+	debugLog("Expire check: " + User + " Expire: " + allows[userInt].EXPIRE)
 	if expireCheck(allows[userInt].EXPIRE) == false {
 		return false, "id expire " + allows[userInt].EXPIRE
 	}
 
-	if checkRejct(udata[userInt].ID, Command) == true {
+	if checkRejct(allows[userInt].ID, Command) == true {
 		fmt.Println("Error: include reject string. ", User, Command)
 		strs := "include reject string!"
 		if secAlert == true {
@@ -1387,6 +1392,7 @@ func checkPreExecuter(sig chan string, User, Command string, hostInt int, channe
 		return false, strs
 	}
 
+	userInt = userCheck(User)
 	go executer(sig, userInt, hostInt, Command, channel, needSCP)
 
 	return true, ""
@@ -1532,6 +1538,15 @@ func uploadToSlack(filename, channel string, api *slack.Client) bool {
 
 	fmt.Printf("upload! Name: %s, URL: %s\n", file.Name, file.URL, file.ID)
 	return true
+}
+
+func userRuleCheck(User string) int {
+	for i := 0; i < len(allows); i++ {
+		if allows[i].ID == User {
+			return i
+		}
+	}
+	return -1
 }
 
 func userCheck(User string) int {
