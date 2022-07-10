@@ -8,19 +8,17 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	crt "crypto/rand"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
-	"net/http"
 	"os"
 	"regexp"
 	"strconv"
@@ -31,9 +29,8 @@ import (
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
 
-	"github.com/appleboy/easyssh-proxy"
+	"github.com/blacknon/go-scplib"
 	"github.com/fsnotify/fsnotify"
-	"github.com/tmc/scp"
 	"golang.org/x/crypto/ssh"
 	"gopkg.in/ini.v1"
 
@@ -42,25 +39,58 @@ import (
 	"golang.org/x/text/transform"
 )
 
-var (
-	secAlert   bool
-	debug      bool
-	logging    bool
-	needSCP    bool
-	delUpload  bool
-	sshTimeout int
-	RETRY      int
-	toFile     int
-	users      []string
-	alerts     []string
-	rejects    []string
-	hosts      []hostsData
-	udata      []userData
-	botName    string
-	autoRW     bool
-	lockFile   string
-	configFile string
+const (
+	totalExecuteNum int = 10
 )
+
+var (
+	secAlert      bool
+	debug         bool
+	logging       bool
+	delUpload     bool
+	sshTimeout    int
+	RETRY         int
+	toFile        int
+	alerts        []alertData
+	allows        []allowData
+	allowCmds     []allowCommandData
+	rejects       []rejectData
+	hosts         []hostsData
+	udata         []userData
+	botName       string
+	autoRW        bool
+	lockFile      string
+	configFile    string
+	admins        []string
+	reports       string
+	uploadtimeout int64
+)
+
+type alertData struct {
+	LABEL string
+	USERS []string
+}
+
+type allowData struct {
+	ID         string
+	LABEL      string
+	PERMISSION int
+	MODE       bool
+	RULE       string
+	EXPIRE     string
+}
+
+type rejectData struct {
+	LABEL    string
+	ALERT    string
+	COMMANDS []string
+}
+
+type allowCommandData struct {
+	LABEL    string
+	ALERT    string
+	COMMANDS []string
+}
 
 type userData struct {
 	ID    string
@@ -70,6 +100,7 @@ type userData struct {
 }
 
 type hostsData struct {
+	LABEL   string
 	RULE    string
 	HOST    string
 	PORT    string
@@ -89,15 +120,12 @@ type receiveData struct {
 }
 
 func main() {
+	sig := make(chan string, totalExecuteNum)
+
 	_secAlert := flag.Bool("alert", true, "[-alert=not allow user or command send alert.(true is enable)]")
 	_Debug := flag.Bool("debug", false, "[-debug=debug mode (true is enable)]")
 	_Logging := flag.Bool("log", false, "[-log=logging mode (true is enable)]")
-	_Config := flag.String("config", ".slabot", "[-config=config file)]")
-	_Rest := flag.Bool("rest", false, "[-rest=normal slack mode (true is enable)]")
-	_Api := flag.Bool("api", false, "[-api=api mode (true is enable)]")
-	_cert := flag.String("cert", "localhost.pem", "[-cert=ssl_certificate file path (if you don't use https, haven't to use this option)]")
-	_key := flag.String("key", "localhost-key.pem", "[-key=ssl_certificate_key file path (if you don't use https, haven't to use this option)]")
-	_port := flag.String("port", "8080", "[-port=port number]")
+	_Config := flag.String("config", "slabot.ini", "[-config=config file)]")
 	_needSCP := flag.Bool("scp", true, "[-scp=need scp mode (true is enable)]")
 	_RETRY := flag.Int("retry", 10, "[-retry=retry counts.]")
 	_plainpassword := flag.Bool("plainpassword", false, "[-plainpassword=use plain text password (true is enable)]")
@@ -106,16 +134,18 @@ func main() {
 	_TOFILE := flag.Int("toFile", 20, "[-toFile=if output over this value. be file.]")
 	_sshTimeout := flag.Int("timeout", 30, "[-timeout=timeout count (second). ]")
 	_botName := flag.String("bot", "slabot", "[-bot=slack bot name (@ + name)]")
+	_IDLookup := flag.Bool("idlookup", true, "[-idlookup=resolve to ID definition (true is enable)]")
 
 	_autoRW := flag.Bool("auto", true, "[-auto=config auto read/write mode (true is enable)]")
 	_lockFile := flag.String("lock", ".lock", "[-lock=lock file for auto read/write)]")
 	_delUpload := flag.Bool("delUpload", false, "[-delUpload=file delete after upload (true is enable)]")
 	_checkRules := flag.Bool("check", true, "[-check=check rules. if connect fail to not use rule. (true is enable)]")
+	_loop := flag.Int("loop", 24, "[-loop=user check loop time (Hour). ]")
+	_uploadtimeout := flag.Int64("uploadtimeout", 900, "[-uploadtimeout=Timeout time for uploading to Slack (Second). ]")
 
 	flag.Parse()
 
 	delUpload = bool(*_delUpload)
-	needSCP = bool(*_needSCP)
 	secAlert = bool(*_secAlert)
 	debug = bool(*_Debug)
 	logging = bool(*_Logging)
@@ -124,6 +154,7 @@ func main() {
 	sshTimeout = int(*_sshTimeout)
 	toFile = int(*_TOFILE)
 	botName = string(*_botName)
+	uploadtimeout = int64(*_uploadtimeout)
 
 	autoRW = bool(*_autoRW)
 	lockFile = string(*_lockFile)
@@ -140,73 +171,6 @@ func main() {
 		}
 	}
 
-	if Exists(configFile) == true {
-		loadConfig(addSpace(*_decryptkey), *_plainpassword, *_checkRules)
-	} else {
-		fmt.Printf("Fail to read config file: %v\n", configFile)
-		os.Exit(1)
-	}
-
-	// creates a new file watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		fmt.Println("ERROR", err)
-	}
-	defer watcher.Close()
-
-	if autoRW == true {
-		go func() {
-			for {
-				select {
-				case <-watcher.Events:
-					if Exists(lockFile) == false {
-						loadConfig(addSpace(*_decryptkey), *_plainpassword, *_checkRules)
-					} else {
-						fmt.Println(" - config read locked! - ")
-					}
-				case <-watcher.Errors:
-					fmt.Println("ERROR", err)
-				}
-			}
-		}()
-	}
-
-	if err := watcher.Add(configFile); err != nil {
-		fmt.Println("ERROR", err)
-	}
-
-	if *_Api == true {
-		http.HandleFunc("/api", apiHandler)
-		go func() {
-			err := http.ListenAndServeTLS(":"+string(*_port), string(*_cert), string(*_key), nil)
-			if err != nil {
-				log.Fatal("ListenAndServeTLS: ", err)
-			}
-		}()
-	} else if *_Rest == true {
-		http.HandleFunc("/slack/events", slackHandler)
-		go func() {
-			if err := http.ListenAndServe(":"+string(*_port), nil); err != nil {
-				log.Fatal(err)
-			}
-		}()
-	} else {
-		socketMode()
-	}
-
-	for {
-		_, ip, err := getIFandIP()
-		if err != nil {
-			fmt.Println(err)
-		} else {
-			fmt.Println("source ip: ", ip, " port: ", string(*_port)+" Exit: Ctrl+c")
-		}
-		time.Sleep(time.Second * 3)
-	}
-	os.Exit(0)
-}
-
-func socketMode() {
 	appToken := os.Getenv("SLACK_APP_TOKEN")
 	if appToken == "" {
 		fmt.Fprintf(os.Stderr, "SLACK_APP_TOKEN must be set.\n")
@@ -234,6 +198,150 @@ func socketMode() {
 		slack.OptionAppLevelToken(appToken),
 	)
 
+	if Exists(configFile) == true {
+		loadConfig(api, addSpace(*_decryptkey), *_plainpassword, *_checkRules, *_IDLookup)
+	} else {
+		fmt.Printf("Fail to read config file: %v\n", configFile)
+		os.Exit(1)
+	}
+
+	// creates a new file watcher
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		fmt.Println("ERROR", err)
+	}
+	//defer watcher.Close()
+
+	if autoRW == true {
+		go func() {
+			for {
+				select {
+				case <-watcher.Events:
+					if Exists(lockFile) == false {
+						time.Sleep(1 * time.Second)
+						loadConfig(api, addSpace(*_decryptkey), *_plainpassword, false, *_IDLookup)
+					} else {
+						fmt.Println(" - config read locked! - ")
+					}
+				case <-watcher.Errors:
+					fmt.Println("ERROR", err)
+				}
+			}
+		}()
+	}
+
+	if err := watcher.Add(configFile); err != nil {
+		fmt.Println("ERROR", err)
+	}
+
+	go socketMode(sig, api, *_needSCP)
+
+	go func() {
+		for {
+			select {
+			case v := <-sig:
+				strs := strings.Split(v, "\t")
+				stra := ""
+
+				switch len(strs) {
+				case 1:
+					stra = "Error: not execute!"
+				case 2:
+					stra = "<@" + strs[1] + ">\nError: not execute!"
+				case 3:
+					stra = "<@" + strs[1] + ">\n```\n" + strs[2] + "```"
+				case 4:
+					tmpFile := "tmp." + strs[1]
+
+					if strings.Count(strs[3], "\n") > toFile {
+						params := slack.FileUploadParameters{
+							Title:    "upload terminal",
+							Filetype: "txt",
+							File:     tmpFile + ".txt",
+							Content:  strs[2] + strs[3],
+							Channels: []string{strs[0]},
+						}
+						_, err := api.UploadFile(params)
+						if err != nil {
+							fmt.Printf("%s\n", err)
+							stra = "<@" + strs[1] + ">\nError: terminal not upload!"
+						} else {
+							stra = "<@" + strs[1] + ">\nSuccess: terminal upload success!"
+						}
+					} else {
+						stra = "<@" + strs[1] + ">\n```\n" + strs[2] + strs[3] + "```"
+					}
+				}
+				_, _, err := api.PostMessage(strs[0], slack.MsgOptionText(stra, false))
+				if err != nil {
+					fmt.Printf("failed posting message: %v", err)
+				}
+			}
+		}
+	}()
+
+	for {
+		time.Sleep(time.Hour * time.Duration(*_loop))
+		usercheck(api)
+	}
+	os.Exit(0)
+}
+
+func usercheck(api *slack.Client) {
+	const layout = "2006/01/02 15:04:05"
+	t := time.Now()
+	strs := "[" + t.Format(layout) + "]\n"
+	for i := 0; i < len(allows); i++ {
+		if expireCheck(allows[i].EXPIRE) == true {
+			user, err := api.GetUserInfo(allows[i].ID)
+			if err != nil {
+				fmt.Printf("%s\n", err)
+			} else {
+				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Not Expire: " + allows[i].EXPIRE + "\n"
+				debugLog(strs)
+			}
+
+		} else {
+			user, err := api.GetUserInfo(allows[i].ID)
+			if err != nil {
+				fmt.Printf("%s\n", err)
+			} else {
+				strs = strs + "User: " + allows[i].ID + "(" + user.Profile.RealName + " " + user.Profile.Email + ")" + " Expire: " + allows[i].EXPIRE + "\n"
+				debugLog(strs)
+			}
+		}
+	}
+
+	_, _, err := api.PostMessage(reports, slack.MsgOptionText(strs, false))
+	if err != nil {
+		fmt.Printf("failed posting message: %v", err)
+	}
+}
+
+func expireCheck(limit string) bool {
+	if limit == "*" {
+		return true
+	}
+
+	jst, err := time.LoadLocation("Asia/Tokyo")
+	if err != nil {
+		panic(err)
+	}
+	unixJST := time.Now().In(jst).Unix()
+	t, _ := time.Parse("2006/01/02", limit)
+	userLimit := t.In(jst).Unix()
+
+	//u := strconv.FormatInt(userLimit, 10)
+	//n := strconv.FormatInt(unixJST, 10)
+	//debugLog("User: " + u + " System: " + n)
+
+	if userLimit >= unixJST {
+		return true
+	}
+	return false
+}
+
+func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 	client := socketmode.New(
 		api,
 		socketmode.OptionDebug(debug),
@@ -270,39 +378,72 @@ func socketMode() {
 
 							debugLog("socket call: " + event.User + " " + command)
 
-							if command == "RULES" {
-								text := slack.NewTextBlockObject(slack.MarkdownType, "Please select *RULE*.", false, false)
-								textSection := slack.NewSectionBlock(text, nil, nil)
+							switch command {
+							case "RULES":
+								rules := returnRules(checkUsers(event.User))
 
-								rules := returnRules()
-								options := make([]*slack.OptionBlockObject, 0, len(rules))
-								for _, v := range rules {
-									optionText := slack.NewTextBlockObject(slack.PlainTextType, v, false, false)
-									options = append(options, slack.NewOptionBlockObject(v, optionText, nil))
+								if len(rules) > 0 {
+									text := slack.NewTextBlockObject(slack.MarkdownType, "Please select *RULE*.", false, false)
+									textSection := slack.NewSectionBlock(text, nil, nil)
+
+									options := make([]*slack.OptionBlockObject, 0, len(rules))
+									for _, v := range rules {
+										optionText := slack.NewTextBlockObject(slack.PlainTextType, v, false, false)
+										options = append(options, slack.NewOptionBlockObject(v, optionText, nil))
+									}
+
+									placeholder := slack.NewTextBlockObject(slack.PlainTextType, "Select RULE", false, false)
+									selectMenu := slack.NewOptionsSelectBlockElement(slack.OptTypeStatic, placeholder, "", options...)
+
+									actionBlock := slack.NewActionBlock("rules", selectMenu)
+
+									fallbackText := slack.MsgOptionText("This client is not supported.", false)
+									blocks := slack.MsgOptionBlocks(textSection, actionBlock)
+
+									if _, err := api.PostEphemeral(event.Channel, event.User, fallbackText, blocks); err != nil {
+										log.Println(err)
+										return
+									}
+								} else {
+									stra := "Error: <@" + event.User + "> use no rules."
+									if secAlert == true {
+										stra = stra + "\n [Security Alert!] " + alertUsers()
+									}
+									_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(stra, false))
+									if err != nil {
+										fmt.Printf("failed posting message: %v", err)
+									}
 								}
+							default:
+								trueFalse := false
+								text := ""
+								splitStr := strings.Split(command, " ")
+								adminChk := adminCommandCheck(event.User, splitStr[0])
 
-								placeholder := slack.NewTextBlockObject(slack.PlainTextType, "Select RULE", false, false)
-								selectMenu := slack.NewOptionsSelectBlockElement(slack.OptTypeStatic, placeholder, "", options...)
-
-								actionBlock := slack.NewActionBlock("rules", selectMenu)
-
-								fallbackText := slack.MsgOptionText("This client is not supported.", false)
-								blocks := slack.MsgOptionBlocks(textSection, actionBlock)
-
-								if _, err := api.PostEphemeral(event.Channel, event.User, fallbackText, blocks); err != nil {
-									log.Println(err)
-									return
+								switch adminChk {
+								case 0:
+									debugLog("User: " + event.User + " call ADMIN Mode: " + command)
+									trueFalse, text = adminCommand(command)
+									if trueFalse == true {
+										writeUsersData()
+									}
+								case 1:
+									text = "<@" + event.User + "> not Allow ADMIN Mode."
+									if secAlert == true {
+										text = text + "\n [Security Alert!] " + alertUsers()
+									}
+								default:
+									trueFalse, text = eventSwitcher(sig, event.User, command, event.Channel, api, needSCP)
 								}
-							} else {
-								trueFalse, text := eventSwitcher(event.User, command, event.Channel)
 
 								if trueFalse == false {
 									text = "Error: " + text
 								}
-
-								_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
-								if err != nil {
-									fmt.Printf("failed posting message: %v", err)
+								if len(text) > 0 {
+									_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
+									if err != nil {
+										fmt.Printf("failed posting message: %v", err)
+									}
 								}
 							}
 						}
@@ -333,7 +474,7 @@ func socketMode() {
 				vals := strings.Split(val, ":")
 				ruleName := strings.Replace(vals[1], "\"", "", -1)
 				userInt := checkUsers(callback.User.ID)
-				udata[userInt].HOST = hostCheck(ruleName)
+				udata[userInt].HOST = hostCheck(ruleName, allows[userInt].LABEL)
 
 				text := "<@" + udata[userInt].ID + "> " + ruleName + " : host set"
 				udata[userInt].PWD = setHome()
@@ -355,77 +496,245 @@ func socketMode() {
 	client.Run()
 }
 
-func slackHandler(w http.ResponseWriter, r *http.Request) {
-	api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
+func adminCommandCheck(user, command string) int {
+	sFlag := false
 
-	verifier, err := slack.NewSecretsVerifier(r.Header, os.Getenv("SLACK_SIGNING_SECRET"))
-	if err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
+	switch command {
+	case "ALERT":
+		sFlag = true
+	case "ALLOWID":
+		sFlag = true
+	case "REJECT":
+		sFlag = true
+	case "HOSTS":
+		sFlag = true
+	case "ALLOW":
+		sFlag = true
+	case "ADMINS":
+		sFlag = true
+	case "REPORT":
+		sFlag = true
 	}
 
-	bodyReader := io.TeeReader(r.Body, &verifier)
-	body, err := ioutil.ReadAll(bodyReader)
-	if err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	if err := verifier.Ensure(); err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-
-	eventsAPIEvent, err := slackevents.ParseEvent(json.RawMessage(body), slackevents.OptionNoVerifyToken())
-	if err != nil {
-		log.Println(err)
-		w.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
-	switch eventsAPIEvent.Type {
-	case slackevents.URLVerification:
-		var res *slackevents.ChallengeResponse
-		if err := json.Unmarshal(body, &res); err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain")
-		if _, err := w.Write([]byte(res.Challenge)); err != nil {
-			log.Println(err)
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-	case slackevents.CallbackEvent:
-		innerEvent := eventsAPIEvent.InnerEvent
-		switch event := innerEvent.Data.(type) {
-		case *slackevents.AppMentionEvent:
-			message := strings.Split(event.Text, " ")
-			if len(message) < 2 {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			command := strings.Replace(event.Text, message[0]+" ", "", 1)
-
-			debugLog("slack call: " + r.RemoteAddr + " " + r.URL.Path + " " + event.User + " " + command)
-
-			trueFalse, text := eventSwitcher(event.User, command, event.Channel)
-
-			if trueFalse == false {
-				text = "Error: " + text
-			}
-
-			if _, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false)); err != nil {
-				log.Println(err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
+	for i := 0; i < len(admins); i++ {
+		if admins[i] == user && sFlag == true {
+			return 0
 		}
 	}
+
+	if sFlag == true {
+		return 1
+	}
+
+	return 2
+}
+
+func adminCommand(command string) (bool, string) {
+	delFlag := false
+	cmd := strings.Split(command, " ")
+	param := strings.Split(cmd[1], ",")
+	if len(param) < 1 {
+		return false, "parameters not set!"
+	}
+
+	if param[0] == "DELETE" {
+		delFlag = true
+	}
+
+	switch cmd[0] {
+	case "ALERT":
+		if delFlag == true {
+			if len(param) != 2 {
+				return false, "ALERT: delete parameter invalid. (!= 2)"
+			}
+			var tmpStr []alertData
+			for i := 0; i < len(alerts); i++ {
+				if alerts[i].LABEL != param[1] {
+					tmpStr = append(tmpStr, alertData{LABEL: alerts[i].LABEL, USERS: alerts[i].USERS})
+				}
+			}
+			alerts = tmpStr
+			return true, "del ALERT: " + param[1]
+		} else {
+			for i := 0; i < len(alerts); i++ {
+				if alerts[i].LABEL == param[0] {
+					return false, "ALERT: parameter invalid. (same label exsits)"
+				}
+			}
+
+			if len(param) < 2 {
+				return false, "ALERT: parameter invalid. (< 2)"
+			}
+			var strr []string
+
+			for i := 1; i < len(param); i++ {
+				strr = append(strr, param[i])
+			}
+			alerts = append(alerts, alertData{LABEL: param[0], USERS: strr})
+			return true, "add ALERT: " + param[0]
+		}
+	case "ALLOWID":
+		if delFlag == true {
+			if len(param) != 2 {
+				return false, "ALLOWID: delete parameter invalid. (!= 2)"
+			}
+			var tmpStr []allowData
+			for i := 0; i < len(allows); i++ {
+				if allows[i].ID != param[1] {
+					tmpStr = append(tmpStr, allowData{ID: allows[i].ID, LABEL: allows[i].LABEL, PERMISSION: allows[i].PERMISSION, MODE: allows[i].MODE, RULE: allows[i].RULE, EXPIRE: allows[i].EXPIRE})
+				}
+			}
+			allows = tmpStr
+			return true, "del ALLOWID: " + param[1]
+		} else {
+			for i := 0; i < len(allows); i++ {
+				if allows[i].ID == param[0] {
+					return false, "ALLOWID: parameter invalid. (same label exsits)"
+				}
+			}
+
+			if len(param) != 6 {
+				return false, "ALLOWID: parameter invalid. (!= 6)"
+			}
+			pInt := 0
+			switch param[2] {
+			case "R":
+				pInt = 1
+			case "RW":
+				pInt = 2
+			}
+
+			mode := false
+			switch param[3] {
+			case "allow":
+				mode = true
+			}
+
+			allows = append(allows, allowData{ID: param[0], LABEL: param[1], PERMISSION: pInt, MODE: mode, RULE: param[4], EXPIRE: param[5]})
+			return true, "add ALLOWID: " + param[0]
+		}
+	case "REJECT":
+		if delFlag == true {
+			if len(param) != 2 {
+				return false, "REJECT: delete parameter invalid. (!= 2)"
+			}
+			var tmpStr []rejectData
+			for i := 0; i < len(rejects); i++ {
+				if rejects[i].LABEL != param[1] {
+					tmpStr = append(tmpStr, rejectData{LABEL: rejects[i].LABEL, ALERT: rejects[i].ALERT, COMMANDS: rejects[i].COMMANDS})
+				}
+			}
+			rejects = tmpStr
+			return true, "del REJECT: " + param[1]
+		} else {
+			for i := 0; i < len(rejects); i++ {
+				if rejects[i].LABEL == param[0] {
+					return false, "REJECT: parameter invalid. (same label exsits)"
+				}
+			}
+
+			if len(param) < 3 {
+				return false, "REJECT: parameter invalid. (< 3)"
+			}
+			var strr []string
+
+			for i := 2; i < len(param); i++ {
+				strr = append(strr, param[i])
+			}
+			rejects = append(rejects, rejectData{LABEL: param[0], ALERT: param[1], COMMANDS: strr})
+			return true, "add REJECT: " + param[0]
+		}
+	case "HOSTS":
+		if delFlag == true {
+			if len(param) != 2 {
+				return false, "HOSTS: delete parameter invalid. (!= 2)"
+			}
+			var tmpStr []hostsData
+			for i := 0; i < len(hosts); i++ {
+				if hosts[i].LABEL != param[1] {
+					tmpStr = append(tmpStr, hostsData{LABEL: hosts[i].LABEL, RULE: hosts[i].RULE, HOST: hosts[i].HOST, PORT: hosts[i].PORT, USER: hosts[i].USER, PASSWD: hosts[i].PASSWD, SHEBANG: hosts[i].SHEBANG})
+				}
+			}
+			hosts = tmpStr
+			return true, "del HOSTS: " + param[1]
+		} else {
+			for i := 0; i < len(hosts); i++ {
+				if hosts[i].LABEL == param[0] {
+					return false, "HOSTS: parameter invalid. (same label exsits)"
+				}
+			}
+
+			if len(param) != 7 {
+				return false, "HOSTS: parameter invalid. (!= 7)"
+			}
+			hosts = append(hosts, hostsData{LABEL: param[0], RULE: param[1], HOST: param[2], PORT: param[3], USER: param[4], PASSWD: param[5], SHEBANG: param[6]})
+			return true, "add HOSTS: " + param[0]
+		}
+	case "ALLOW":
+		if delFlag == true {
+			if len(param) != 2 {
+				return false, "ALLOW: delete parameter invalid. (!= 2)"
+			}
+			var tmpStr []allowCommandData
+			for i := 0; i < len(allowCmds); i++ {
+				if allowCmds[i].LABEL != param[1] {
+					tmpStr = append(tmpStr, allowCommandData{LABEL: allowCmds[i].LABEL, ALERT: allowCmds[i].ALERT, COMMANDS: allowCmds[i].COMMANDS})
+				}
+			}
+			allowCmds = tmpStr
+			return true, "del ALLOW: " + param[1]
+		} else {
+			for i := 0; i < len(allowCmds); i++ {
+				if allowCmds[i].LABEL == param[0] {
+					return false, "ALLOW: parameter invalid. (same label exsits)"
+				}
+			}
+
+			if len(param) < 3 {
+				return false, "ALLOW: parameter invalid. (< 3)"
+			}
+			var strr []string
+
+			for i := 2; i < len(param); i++ {
+				strr = append(strr, param[i])
+			}
+			allowCmds = append(allowCmds, allowCommandData{LABEL: param[0], ALERT: param[1], COMMANDS: strr})
+			return true, "add ALLOW: " + param[0]
+		}
+	case "ADMINS":
+		if delFlag == true {
+			if len(param) != 2 {
+				return false, "ADMINS: delete parameter invalid. (!= 2)"
+			}
+			var tmpStr []string
+			for i := 0; i < len(admins); i++ {
+				if admins[i] != param[1] {
+					tmpStr = append(tmpStr, admins[i])
+				}
+			}
+			admins = tmpStr
+			return true, "del ADMINS: " + param[1]
+		} else {
+			for i := 0; i < len(admins); i++ {
+				if admins[i] == param[0] {
+					return false, "ADMINS: parameter invalid. (same label exsits)"
+				}
+			}
+
+			if len(param) != 1 {
+				return false, "ALLOW: parameter invalid. (!= 1)"
+			}
+			admins = append(admins, param[0])
+			return true, "add ADMINS: " + param[0]
+		}
+	case "REPORT":
+		if len(param) != 1 {
+			return false, "REPORT: parameter invalid. (!= 1)"
+		}
+		reports = param[0]
+		return true, "report channnel changed"
+	}
+	return false, "internal failure.."
 }
 
 func returnAlias(userInt int) string {
@@ -446,10 +755,13 @@ func returnHosts() string {
 	return strs
 }
 
-func returnRules() []string {
+func returnRules(userInt int) []string {
 	var strs []string
+
 	for i := 0; i < len(hosts); i++ {
-		strs = append(strs, hosts[i].RULE)
+		if allows[userInt].LABEL == hosts[i].LABEL {
+			strs = append(strs, hosts[i].RULE)
+		}
 	}
 	return strs
 }
@@ -480,7 +792,7 @@ func unset(s []string, i int) []string {
 	return append(s[:i], s[i+1:]...)
 }
 
-func eventSwitcher(User, Command, channel string) (bool, string) {
+func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Client, needSCP bool) (bool, string) {
 	userInt := checkUsers(User)
 
 	// for debug
@@ -507,25 +819,28 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 			return true, "<@" + udata[userInt].ID + ">\n```\n" + strs + "```"
 		}
 		if strings.Index(Command, "alias ") == 0 && strings.Index(Command, "=") != -1 {
-			stra := strings.Split(Command, "=")
-			if len(stra[1]) == 0 {
-				Command := strings.Replace(Command, "alias ", "", 1)
-				deleteAlias(userInt, Command)
-				trueFalse = true
-				data = "<@" + udata[userInt].ID + "> " + Command + " : alias delete"
-				writeUsersData()
+			if checkMode(udata[userInt].ID) == false {
+				stra := strings.Split(Command, "=")
+				if len(stra[1]) == 0 {
+					Command := strings.Replace(Command, "alias ", "", 1)
+					deleteAlias(userInt, Command)
+					trueFalse = true
+					data = "<@" + udata[userInt].ID + "> " + Command + " : alias delete"
+					writeUsersData()
+				} else {
+					Command := strings.Replace(Command, "alias ", "", 1)
+					udata[userInt].ALIAS = append(udata[userInt].ALIAS, Command)
+					trueFalse = true
+					data = "<@" + udata[userInt].ID + "> " + Command + " : alias set"
+					writeUsersData()
+				}
 			} else {
-				Command := strings.Replace(Command, "alias ", "", 1)
-				udata[userInt].ALIAS = append(udata[userInt].ALIAS, Command)
-				trueFalse = true
-				data = "<@" + udata[userInt].ID + "> " + Command + " : alias set"
-				writeUsersData()
+				data = "<@" + udata[userInt].ID + "> : allow mode, alias not use!"
 			}
 		} else {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> " + Command + " : alias set fail"
 		}
-
 	} else if strings.Index(Command, "SETHOST") == 0 {
 		if Command == "SETHOST" {
 			strs := returnHosts()
@@ -536,8 +851,16 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 		}
 		if strings.Index(Command, "SETHOST=") == 0 {
 			stra := strings.Split(Command, "SETHOST=")
-			hostInt := hostCheck(stra[1])
-			if hostInt == -1 {
+			hostInt := hostCheck(stra[1], allows[userInt].LABEL)
+			if hostInt == -2 {
+				debugLog("Error: host not allow. " + User + " " + Command)
+
+				trueFalse = false
+				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not allow"
+				if secAlert == true {
+					data = data + "\n [Security Alert!] " + alertUsers()
+				}
+			} else if hostInt == -1 {
 				debugLog("Error: host not found. " + User + " " + Command)
 
 				trueFalse = false
@@ -551,13 +874,49 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 				writeUsersData()
 			}
 		}
-	} else if strings.Index(Command, "UPLOAD=") == 0 {
-		stra := strings.Split(Command, "UPLOAD=")
-		trueFalse, data = uploadFile(userInt, stra[1])
+	} else if strings.Index(Command, "toSERVER=") == 0 && udata[userInt].HOST != -1 {
+		if allows[userInt].PERMISSION == 2 {
+			stra := strings.Split(Command, "toSERVER=")
+
+			path := ""
+			if stra[1] == "." {
+				path = "."
+			} else if strings.Index(stra[1], "/") == 0 {
+				path = stra[1] + "/"
+			} else {
+				path = udata[userInt].PWD + "/" + stra[1] + "/"
+			}
+
+			trueFalse, data = uploadFile(userInt, path, api)
+		} else {
+			trueFalse = false
+			data = "<@" + udata[userInt].ID + "> : not allow upload"
+			if secAlert == true {
+				data = data + "\n [Security Alert!] " + alertUsers()
+			}
+		}
+	} else if strings.Index(Command, "toSLACK=") == 0 && udata[userInt].HOST != -1 {
+		if allows[userInt].PERMISSION > 0 {
+			stra := strings.Split(Command, "toSLACK=")
+
+			if upload(udata[userInt].HOST, userInt, stra[1], channel, api) == false {
+				data = "<@" + udata[userInt].ID + "> file upload fail"
+				trueFalse = false
+			} else {
+				data = "<@" + udata[userInt].ID + "> file upload success"
+				trueFalse = true
+			}
+		} else {
+			trueFalse = false
+			data = "<@" + udata[userInt].ID + "> : not allow download"
+			if secAlert == true {
+				data = data + "\n [Security Alert!] " + alertUsers()
+			}
+		}
 	} else {
 		if checkHost(User) == true {
 			Command = replaceAlias(userInt, Command)
-			trueFalse, data = checkPreExecuter(User, Command, udata[userInt].HOST, channel)
+			trueFalse, data = checkPreExecuter(sig, User, Command, udata[userInt].HOST, channel, api, needSCP)
 		} else {
 			trueFalse = false
 			data = "<@" + udata[userInt].ID + "> " + Command + ": host not set"
@@ -566,8 +925,16 @@ func eventSwitcher(User, Command, channel string) (bool, string) {
 	return trueFalse, data
 }
 
-func uploadFile(userInt int, path string) (bool, string) {
-	api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
+func checkMode(ID string) bool {
+	for i := 0; i < len(allows); i++ {
+		if allows[i].ID == ID {
+			return allows[i].MODE
+		}
+	}
+	return true
+}
+
+func uploadFile(userInt int, path string, api *slack.Client) (bool, string) {
 	params := slack.GetFilesParameters{
 		User:  udata[userInt].ID,
 		Count: 1,
@@ -590,19 +957,10 @@ func uploadFile(userInt int, path string) (bool, string) {
 		fmt.Println(error)
 		return false, "file not download: " + files[0].Name
 	}
-
 	file.Close()
 
-	if len(path) == 0 {
-		path = udata[userInt].PWD
-	}
-
-	if scpDo(udata[userInt].HOST, files[0].Name, path) == false {
+	if scpDo(false, udata[userInt].HOST, files[0].Name, path) == false {
 		return false, "file not scp: " + files[0].Name
-	}
-
-	if err := os.Remove(files[0].Name); err != nil {
-		fmt.Println(err)
 	}
 
 	if delUpload == true {
@@ -641,22 +999,52 @@ func writeUsersData() {
 
 		_, err = file.WriteString("[ALERT]\n")
 		for i := 0; i < len(alerts); i++ {
-			_, err = file.WriteString(alerts[i] + "\n")
+			_, err = file.WriteString(alerts[i].LABEL + "\t")
+			for r := 0; r < len(alerts[i].USERS); r++ {
+				if r == 0 {
+					_, err = file.WriteString(alerts[i].USERS[r])
+				} else {
+					_, err = file.WriteString("\t" + alerts[i].USERS[r])
+				}
+			}
+			_, err = file.WriteString("\n")
 		}
 
 		_, err = file.WriteString("[ALLOWID]\n")
-		for i := 0; i < len(users); i++ {
-			_, err = file.WriteString(users[i] + "\n")
+		for i := 0; i < len(allows); i++ {
+			PERM := "NO"
+			switch allows[i].PERMISSION {
+			case 1:
+				PERM = "R"
+			case 2:
+				PERM = "RW"
+			}
+
+			MODE := "reject"
+			switch allows[i].MODE {
+			case true:
+				MODE = "allow"
+			}
+
+			_, err = file.WriteString(allows[i].ID + "\t" + allows[i].LABEL + "\t" + PERM + "\t" + MODE + "\t" + allows[i].RULE + "\t" + allows[i].EXPIRE + "\n")
 		}
 
 		_, err = file.WriteString("[REJECT]\n")
 		for i := 0; i < len(rejects); i++ {
-			_, err = file.WriteString(rejects[i] + "\n")
+			_, err = file.WriteString(rejects[i].LABEL + "\t" + rejects[i].ALERT + "\t")
+			for r := 0; r < len(rejects[i].COMMANDS); r++ {
+				if r == 0 {
+					_, err = file.WriteString(rejects[i].COMMANDS[r])
+				} else {
+					_, err = file.WriteString("\t" + rejects[i].COMMANDS[r])
+				}
+			}
+			_, err = file.WriteString("\n")
 		}
 
 		_, err = file.WriteString("[HOSTS]\n")
 		for i := 0; i < len(hosts); i++ {
-			_, err = file.WriteString(hosts[i].RULE + "\t" + hosts[i].HOST + "\t" + hosts[i].PORT + "\t" + hosts[i].USER + "\t" + hosts[i].PASSWD + "\t" + hosts[i].SHEBANG + "\n")
+			_, err = file.WriteString(hosts[i].LABEL + "\t" + hosts[i].RULE + "\t" + hosts[i].HOST + "\t" + hosts[i].PORT + "\t" + hosts[i].USER + "\t" + hosts[i].PASSWD + "\t" + hosts[i].SHEBANG + "\n")
 		}
 
 		_, err = file.WriteString("[USERS]\n")
@@ -664,6 +1052,27 @@ func writeUsersData() {
 			aliasStr := getAliasToStr(udata[i].ALIAS)
 			_, err = file.WriteString(udata[i].ID + "\t" + udata[i].PWD + "\t" + strconv.Itoa(udata[i].HOST) + "\t" + aliasStr + "\n")
 		}
+
+		_, err = file.WriteString("[ALLOW]\n")
+		for i := 0; i < len(allowCmds); i++ {
+			_, err = file.WriteString(allowCmds[i].LABEL + "\t" + allowCmds[i].ALERT + "\t")
+			for r := 0; r < len(allowCmds[i].COMMANDS); r++ {
+				if r == 0 {
+					_, err = file.WriteString(allowCmds[i].COMMANDS[r])
+				} else {
+					_, err = file.WriteString("\t" + allowCmds[i].COMMANDS[r])
+				}
+			}
+			_, err = file.WriteString("\n")
+		}
+
+		_, err = file.WriteString("[ADMINS]\n")
+		for i := 0; i < len(admins); i++ {
+			_, err = file.WriteString(admins[i] + "\n")
+		}
+
+		_, err = file.WriteString("[REPORT]\n")
+		_, err = file.WriteString(reports + "\n")
 
 		if err := os.Remove(lockFile); err != nil {
 			fmt.Println(err)
@@ -695,8 +1104,10 @@ func debugLog(message string) {
 	}
 
 	const layout = "2006-01-02_15"
+	const layout2 = "2006/01/02 15:04:05"
 	t := time.Now()
 	filename := botName + "_" + t.Format(layout) + ".log"
+	logHead := "[" + t.Format(layout2) + "] "
 
 	if Exists(filename) == true {
 		file, err = os.OpenFile(filename, os.O_WRONLY|os.O_APPEND, 0666)
@@ -709,7 +1120,7 @@ func debugLog(message string) {
 		return
 	}
 	defer file.Close()
-	fmt.Fprintln(file, message)
+	fmt.Fprintln(file, logHead+message)
 }
 
 func writeFile(filename, stra string, userInt int, dirFlag bool) bool {
@@ -731,9 +1142,9 @@ func writeFile(filename, stra string, userInt int, dirFlag bool) bool {
 	return true
 }
 
-func loadConfig(decryptstr string, plainpassword bool, checkRules bool) {
+func loadConfig(api *slack.Client, decryptstr string, plainpassword bool, checkRules, idlookup bool) {
 	loadOptions := ini.LoadOptions{}
-	loadOptions.UnparseableSections = []string{"ALERT", "ALLOWID", "REJECT", "HOSTS", "USERS"}
+	loadOptions.UnparseableSections = []string{"ALERT", "ALLOWID", "REJECT", "HOSTS", "USERS", "ALLOW", "USERS", "ALLOW", "ADMINS", "REPORT"}
 
 	cfg, err := ini.LoadSources(loadOptions, configFile)
 	if err != nil {
@@ -741,129 +1152,167 @@ func loadConfig(decryptstr string, plainpassword bool, checkRules bool) {
 		os.Exit(1)
 	}
 
+	usersMap := map[string]string{}
+
+	if idlookup == true {
+		users, err := api.GetUsers()
+		if err == nil {
+			for _, user := range users {
+				debugLog("UserIDs: " + user.ID + " " + user.Name)
+				usersMap[user.Name] = user.ID
+			}
+		}
+	}
+
 	alerts = nil
-	users = nil
+	allows = nil
 	rejects = nil
 	hosts = nil
 	udata = nil
+	allowCmds = nil
+	admins = nil
+	reports = ""
 
-	setSingleConfigStrs(&alerts, "ALERT", cfg.Section("ALERT").Body())
-	setSingleConfigStrs(&users, "ALLOWID", cfg.Section("ALLOWID").Body())
-	setSingleConfigStrs(&rejects, "REJECT", cfg.Section("REJECT").Body())
-	setSingleConfigHosts(&hosts, "HOSTS", cfg.Section("HOSTS").Body(), decryptstr, plainpassword, checkRules)
-	setUsersData("USERS", cfg.Section("USERS").Body())
+	setStructs("ALERT", cfg.Section("ALERT").Body(), 0, "", false, false, idlookup, usersMap)
+	setStructs("ALLOWID", cfg.Section("ALLOWID").Body(), 1, "", false, false, idlookup, usersMap)
+	setStructs("REJECT", cfg.Section("REJECT").Body(), 2, "", false, false, idlookup, usersMap)
+	setStructs("HOSTS", cfg.Section("HOSTS").Body(), 3, decryptstr, plainpassword, checkRules, idlookup, usersMap)
+	setStructs("USERS", cfg.Section("USERS").Body(), 4, "", false, false, idlookup, usersMap)
+	setStructs("ALLOW", cfg.Section("ALLOW").Body(), 5, "", false, false, idlookup, usersMap)
+	setStructs("ADMINS", cfg.Section("ADMINS").Body(), 6, "", false, false, idlookup, usersMap)
+	setStructs("REPORT", cfg.Section("REPORT").Body(), 7, "", false, false, idlookup, usersMap)
 }
 
-func setSingleConfigStrs(config *[]string, configType, datas string) {
+func setStructs(configType, datas string, flag int, decryptstr string, plainpassword, checkRules, idlookup bool, users map[string]string) {
+	cFlag := 0
 	debugLog(" -- " + configType + " --")
 
 	for _, v := range regexp.MustCompile("\r\n|\n\r|\n|\r").Split(datas, -1) {
 		if len(v) > 0 {
-			*config = append(*config, v)
-		}
-		debugLog(v)
-	}
-}
-
-func setUsersData(configType, datas string) {
-	var aliasStrs []string
-	debugLog(" -- " + configType + " --")
-
-	for _, v := range regexp.MustCompile("\r\n|\n\r|\n|\r").Split(datas, -1) {
-		if len(v) > 0 {
-			if strings.Index(v, "\t") != -1 {
+			if strings.Index(v, "\t") != -1 && flag != 6 && flag != 7 {
 				strs := strings.Split(v, "\t")
-				convInt, err := strconv.Atoi(strs[2])
 
-				if len(strs) > 3 {
-					for i := 3; i < len(strs); i++ {
-						aliasStrs = append(aliasStrs, strs[i])
+				switch flag {
+				case 0:
+					if len(strs) > 1 {
+						var strr []string
+
+						for i := 1; i < len(strs); i++ {
+							strr = append(strr, setUserStr(idlookup, users, strs[i]))
+						}
+						alerts = append(alerts, alertData{LABEL: strs[0], USERS: strr})
+						debugLog(v)
 					}
-				}
+				case 1:
+					if len(strs) == 6 {
+						pInt := 0
+						switch strs[2] {
+						case "R":
+							pInt = 1
+						case "RW":
+							pInt = 2
+						}
 
-				if err == nil {
-					udata = append(udata, userData{ID: strs[0], PWD: strs[1], HOST: convInt, ALIAS: aliasStrs})
-				}
-			}
-		}
-		debugLog(v)
-	}
-}
+						mode := false
+						switch strs[3] {
+						case "allow":
+							mode = true
+						}
 
-func setSingleConfigHosts(config *[]hostsData, configType, datas, decryptstr string, plainpassword, checkRules bool) {
-	debugLog(" -- " + configType + " --")
-
-	for _, v := range regexp.MustCompile("\r\n|\n\r|\n|\r").Split(datas, -1) {
-		if len(v) > 0 {
-			if strings.Index(v, "\t") != -1 {
-				strs := strings.Split(v, "\t")
-				pass := ""
-				if plainpassword == true || Exists(strs[4]) == true {
-					pass = strs[4]
-				} else {
-					passTmp, err := decrypt(strs[4], []byte(decryptstr))
-					if err != nil {
-						fmt.Println("WARN: not password decrypt!: ", strs[4])
-						fmt.Println(err)
+						allows = append(allows, allowData{ID: setUserStr(idlookup, users, strs[0]), LABEL: strs[1], PERMISSION: pInt, MODE: mode, RULE: strs[4], EXPIRE: strs[5]})
+						debugLog(v)
 					}
-					pass = passTmp
-				}
+				case 2:
+					if len(strs) > 2 {
+						var strr []string
 
-				if checkRules == true {
-					_, done, err := sshDo(strs[3], strs[1], pass, strs[2], "cd")
-					if done == false || err != nil {
-						debugLog("RULE: " + strs[0] + " connect fail! " + strs[3] + " " + strs[1] + " " + pass + " " + strs[2])
+						for i := 2; i < len(strs); i++ {
+							strr = append(strr, strs[i])
+						}
+						rejects = append(rejects, rejectData{LABEL: strs[0], ALERT: strs[1], COMMANDS: strr})
+						debugLog(v)
+					}
+				case 3:
+					pass := ""
+					if plainpassword == true || Exists(strs[5]) == true {
+						pass = strs[5]
 					} else {
-						debugLog("add RULE: " + strs[0] + " " + strs[3] + " " + strs[1] + " " + pass + " " + strs[2])
-						*config = append(*config, hostsData{RULE: strs[0], HOST: strs[1], PORT: strs[2], USER: strs[3], PASSWD: pass, SHEBANG: strs[5]})
+						passTmp, err := decrypt(strs[5], []byte(decryptstr))
+						if err != nil {
+							fmt.Println("WARN: not password decrypt!: ", strs[5])
+							fmt.Println(err)
+						}
+						pass = passTmp
+					}
+
+					if checkRules == true {
+						_, done, err := sshDo(strs[4], strs[2], pass, strs[3], "cd", 0)
+						if done == false || err != nil {
+							debugLog("RULE: " + strs[0] + " connect fail! " + strs[3] + " " + strs[4] + " " + pass + " " + strs[5])
+						} else {
+							debugLog("add RULE: " + strs[0] + " " + strs[3] + " " + strs[1] + " " + pass + " " + strs[2])
+							hosts = append(hosts, hostsData{LABEL: strs[0], RULE: strs[1], HOST: strs[2], PORT: strs[3], USER: strs[4], PASSWD: pass, SHEBANG: strs[6]})
+							cFlag = cFlag + 1
+						}
+					} else {
+						debugLog("add RULE: " + strs[1] + " " + strs[4] + " " + strs[2] + " " + pass + " " + strs[3] + " " + strs[6])
+						hosts = append(hosts, hostsData{LABEL: strs[0], RULE: strs[1], HOST: strs[2], PORT: strs[3], USER: strs[4], PASSWD: pass, SHEBANG: strs[6]})
+					}
+				case 4:
+					if len(strs) > 2 {
+						var strr []string
+						for i := 3; i < len(strs); i++ {
+							strr = append(strr, strs[i])
+						}
+						convInt, err := strconv.Atoi(strs[2])
+						if err == nil {
+							udata = append(udata, userData{ID: strs[0], PWD: strs[1], HOST: convInt, ALIAS: strr})
+						}
+						debugLog(v)
+					}
+				case 5:
+					if len(strs) > 2 {
+						var strr []string
+
+						for i := 2; i < len(strs); i++ {
+							strr = append(strr, strs[i])
+						}
+						allowCmds = append(allowCmds, allowCommandData{LABEL: strs[0], ALERT: strs[1], COMMANDS: strr})
+						debugLog(v)
 					}
 				}
+			} else if flag == 6 {
+				admins = append(admins, v)
+				debugLog(v)
+			} else if flag == 7 {
+				reports = v
+				debugLog(v)
 			}
 		}
 	}
+	if checkRules == true {
+		if flag == 3 && cFlag == 0 {
+			fmt.Println("all host not connect! check config!!")
+			os.Exit(-1)
+		}
+	}
+}
+
+func setUserStr(IDLookup bool, users map[string]string, key string) string {
+	if IDLookup == true {
+		us, ok := users[key]
+		if ok == true {
+			debugLog("Resove User: " + key + " -> " + us)
+			return us
+		}
+	}
+	debugLog("No Resolv:" + key)
+	return key
 }
 
 func Exists(filename string) bool {
 	_, err := os.Stat(filename)
 	return err == nil
-}
-
-// FYI: https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
-func getIFandIP() (string, string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", "", err
-	}
-	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 {
-			continue // interface down
-		}
-		if iface.Flags&net.FlagLoopback != 0 {
-			continue // loopback interface
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			return "", "", err
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-			ip = ip.To4()
-			if ip == nil {
-				continue // not an ipv4 address
-			}
-			return iface.Name, ip.String(), nil
-		}
-	}
-	return "", "", errors.New("are you connected to the network?")
 }
 
 func checkUsers(User string) int {
@@ -878,10 +1327,11 @@ func checkUsers(User string) int {
 }
 
 func setHome() string {
-	if len(os.Getenv("HOME")) == 0 {
-		return os.Getenv("HOMEPATH")
-	}
-	return os.Getenv("HOME")
+	// if len(os.Getenv("HOME")) == 0 {
+	// 	return os.Getenv("HOMEPATH")
+	// }
+	// return os.Getenv("HOME")
+	return "~/"
 }
 
 func checkHost(User string) bool {
@@ -898,46 +1348,12 @@ func checkHost(User string) bool {
 }
 
 func allowUser(User string) bool {
-	for i := 0; i < len(users); i++ {
-		if users[i] == User {
+	for i := 0; i < len(allows); i++ {
+		if allows[i].ID == User {
 			return true
 		}
 	}
 	return false
-}
-
-func apiHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
-	w.Header().Set("Content-Type", "application/json")
-
-	d := json.NewDecoder(r.Body)
-	p := &receiveData{}
-	err := d.Decode(p)
-	if err != nil {
-		w.Write(JsonResponseToByte("Error", "internal server error"))
-		return
-	}
-
-	debugLog("api call: " + r.RemoteAddr + " " + r.URL.Path + " " + p.User + " " + p.Command)
-
-	data := responseData{Status: "", Message: ""}
-
-	trueFalse, text := eventSwitcher(p.User, p.Command, "")
-
-	if trueFalse == true {
-		data = responseData{Status: "Success", Message: text}
-	} else {
-		data = responseData{Status: "Error", Message: text}
-	}
-
-	outputJson, err := json.Marshal(data)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	w.Write(outputJson)
 }
 
 func JsonResponseToByte(status, message string) []byte {
@@ -949,8 +1365,8 @@ func JsonResponseToByte(status, message string) []byte {
 	return []byte(outputJson)
 }
 
-func checkPreExecuter(User, Command string, hostInt int, channel string) (bool, string) {
-	userInt := userCheck(User)
+func checkPreExecuter(sig chan string, User, Command string, hostInt int, channel string, api *slack.Client, needSCP bool) (bool, string) {
+	userInt := userRuleCheck(User)
 	if userInt == -1 {
 		debugLog("Error: user not found. " + User + " " + Command)
 		return false, User + ": user not found"
@@ -961,79 +1377,159 @@ func checkPreExecuter(User, Command string, hostInt int, channel string) (bool, 
 		return false, "command sring not include"
 	}
 
-	for i := 0; i < len(rejects); i++ {
-		if strings.Index(Command, rejects[i]) != -1 {
-			fmt.Println("Error: include reject string. ", User, Command)
-			strs := "include reject string!"
-			if secAlert == true {
-				strs = strs + "\n [Security Alert!] " + alertUsers()
+	debugLog("Expire check: " + User + " Expire: " + allows[userInt].EXPIRE)
+	if expireCheck(allows[userInt].EXPIRE) == false {
+		return false, "id expire " + allows[userInt].EXPIRE
+	}
+
+	if checkRejct(allows[userInt].ID, Command) == true {
+		fmt.Println("Error: include reject string. ", User, Command)
+		strs := "include reject string!"
+		if secAlert == true {
+			strs = strs + "\n [Security Alert!] " + alertUsers()
+		}
+		return false, strs
+	}
+
+	userInt = userCheck(User)
+	go executer(sig, userInt, hostInt, Command, channel, needSCP)
+
+	return true, ""
+}
+
+func checkRejct(ID, Command string) bool {
+	sID := 0
+	uID := ""
+	for i := 0; i < len(allows); i++ {
+		if allows[i].ID == ID {
+			uID = allows[i].RULE
+			sID = i
+		}
+	}
+	if uID == "" {
+		return true
+	}
+
+	switch allows[sID].MODE {
+	case true:
+		//alllow mode
+		aInt := 0
+		for i := 0; i < len(allowCmds); i++ {
+			if allowCmds[i].LABEL == uID {
+				aInt = i + 1
 			}
-			return false, strs
+		}
+		if aInt == 0 {
+			return true
+		}
+
+		for i := 0; i < len(allowCmds[aInt-1].COMMANDS); i++ {
+			if strings.Index(Command, allowCmds[aInt-1].COMMANDS[i]+" ") == 0 || strings.Index(Command, allowCmds[aInt-1].COMMANDS[i]) == 0 {
+				if checkPipe(Command) == true {
+					return false
+				}
+			}
+		}
+		return true
+	default:
+		//reject mode
+		rInt := 0
+		for i := 0; i < len(rejects); i++ {
+			if rejects[i].LABEL == uID {
+				rInt = i + 1
+			}
+		}
+		if rInt == 0 {
+			return true
+		}
+
+		for i := 0; i < len(rejects[rInt-1].COMMANDS); i++ {
+			if strings.Index(Command, rejects[rInt-1].COMMANDS[i]) != -1 {
+				return true
+			}
 		}
 	}
 
-	if strings.Index(Command, "UPLOAD=") == 0 {
-		if upload(userInt, Command, channel) == false {
-			return false, "<@" + udata[userInt].ID + "> file upload fail"
-		} else {
-			return true, "<@" + udata[userInt].ID + "> alfile upload success"
-		}
-	} else {
-		strs := executer(userInt, hostInt, Command, channel)
-		if len(strs) == 0 {
-			return false, "command not execute"
-		} else {
-			return true, strs
-		}
-	}
+	return false
+}
 
-	return true, User + ":" + Command
+func checkPipe(command string) bool {
+	if strings.Index(command, ">") != -1 {
+		return false
+	}
+	if strings.Index(command, "<") != -1 {
+		return false
+	}
+	if strings.Index(command, "|") != -1 {
+		return false
+	}
+	if strings.Index(command, "&") != -1 {
+		return false
+	}
+	if strings.Index(command, ";") != -1 {
+		return false
+	}
+	debugLog(command + " include pipe!")
+
+	return true
 }
 
 func alertUsers() string {
 	strs := ""
 	for i := 0; i < len(alerts); i++ {
-		switch alerts[i] {
-		case "here":
-			strs = strs + " <!here>"
-		case "channel":
-			strs = strs + " <!channnel>"
-		case "everyone":
-			strs = strs + " <!everyone>"
-		default:
-			strs = strs + " <@" + alerts[i] + ">"
+		for r := 0; r < len(alerts[i].USERS); r++ {
+			switch alerts[i].USERS[r] {
+			case "here":
+				strs = strs + " <!here>"
+			case "channel":
+				strs = strs + " <!channnel>"
+			case "everyone":
+				strs = strs + " <!everyone>"
+			default:
+				strs = strs + " <@" + alerts[i].USERS[r] + ">"
+			}
 		}
 	}
 	return strs
 }
 
-func upload(userInt int, Command, channel string) bool {
-	strs := strings.Split(Command, "=")
+func upload(hostInt, userInt int, Command, channel string, api *slack.Client) bool {
+	filepath := ""
+	if strings.Index(Command, "/") == 0 {
+		filepath = Command
+		stra := strings.Split(Command, "/")
+		Command = stra[len(stra)-1]
+	} else {
+		filepath = udata[userInt].PWD + "/" + Command
+	}
+	debugLog("filepath: " + filepath)
 
-	filepath := udata[userInt].PWD + "/" + strs[1]
-	if Exists(filepath) == false {
-		filepath = udata[userInt].PWD + strs[1]
-		if Exists(filepath) == false {
-			debugLog("upload fail " + filepath)
-			return false
-		}
+	if scpDo(true, hostInt, filepath, Command) == false {
+		return false
 	}
 
-	if uploadToSlack(filepath, channel) == false {
+	if uploadToSlack(Command, channel, api) == false {
 		return false
+	}
+
+	if err := os.Remove(Command); err != nil {
+		fmt.Println(err)
 	}
 	return true
 }
 
-func uploadToSlack(filename, channel string) bool {
+func uploadToSlack(filename, channel string, api *slack.Client) bool {
 	debugLog("uploading.. " + filename)
 
-	api := slack.New(os.Getenv("SLACK_BOT_TOKEN"))
+	debugLog("upload: " + filename + " to: " + channel)
+
 	params := slack.FileUploadParameters{
-		Title:    "upload " + filename,
+		Title:    filename,
 		File:     filename,
+		Filetype: "binary",
 		Channels: []string{channel},
 	}
+
 	file, err := api.UploadFile(params)
 	if err != nil {
 		fmt.Printf("%s\n", err)
@@ -1044,79 +1540,107 @@ func uploadToSlack(filename, channel string) bool {
 	return true
 }
 
-func userCheck(User string) int {
-	for i := 0; i < len(users); i++ {
-		if users[i] == User {
+func userRuleCheck(User string) int {
+	for i := 0; i < len(allows); i++ {
+		if allows[i].ID == User {
 			return i
 		}
 	}
 	return -1
 }
 
-func hostCheck(Host string) int {
+func userCheck(User string) int {
+	for i := 0; i < len(udata); i++ {
+		if udata[i].ID == User {
+			return i
+		}
+	}
+	return -1
+}
+
+func hostCheck(Host, uLabel string) int {
 	for i := 0; i < len(hosts); i++ {
 		if hosts[i].RULE == Host {
+			if hosts[i].LABEL != uLabel {
+				return -2
+			}
 			return i
 		}
 	}
 	return -1
 }
 
-func executer(userInt, hostInt int, Command, channel string) string {
+func executer(sig chan string, userInt, hostInt int, Command, channel string, needSCP bool) {
+	prompt := "[@" + botName + " " + udata[userInt].PWD + "]$ " + Command + "\n"
+	done := false
+	strs := ""
+	dFlag := false
+
+	if strings.Index(Command, "pwd") == 0 {
+		sig <- channel + "\t" + udata[userInt].ID + "\t" + prompt + "\t" + udata[userInt].PWD
+		return
+	}
+
 	sshCommand := "cd " + udata[userInt].PWD + ";" + Command
-	tmpFile := "tmp." + users[userInt]
-	if needSCP == true {
+	tmpFile := "tmp." + allows[userInt].ID
+
+	if Command != "cd /" {
+		if Command[len(Command)-1] == 47 {
+			Command = Command[:len(Command)-1]
+		}
+	}
+
+	var stra []string
+	if strings.Index(Command, "cd ") == 0 {
+		dFlag = true
+		stra = strings.Split(Command, "cd ")
+		if strings.Index(stra[1], "/") == 0 {
+			sshCommand = "cd " + stra[1] + " ; pwd"
+		} else {
+			sshCommand = "cd " + udata[userInt].PWD + "/" + stra[1] + " ; pwd"
+		}
+	} else if Command[0] == byte('#') && len(Command) > 1 {
+		Command = Command[1:]
+		debugLog("# is force no scp mode: " + Command)
+	} else if needSCP == true {
 		writeFile(tmpFile+".bat", Command, userInt, true)
 
 		scpFlag := false
 		for i := 0; i < RETRY; i++ {
-			if scpDo(hostInt, tmpFile+".bat", ".") == true {
+			if scpDo(false, hostInt, tmpFile+".bat", ".") == true {
 				scpFlag = true
+				break
+			} else {
 				break
 			}
 		}
 		if scpFlag == false {
-			return ""
+			sig <- channel + "\t"
+			return
 		}
-		sshCommand = hosts[hostInt].SHEBANG + " " + tmpFile + ".bat"
+		sshCommand = hosts[hostInt].SHEBANG + " ~/" + tmpFile + ".bat"
 	}
 
-	var err error
-
-	prompt := "[@" + botName + " " + udata[userInt].PWD + "]$ " + Command + "\n"
-	done := false
-	strs := ""
 	for i := 0; i < RETRY; i++ {
-		strs, done, err = sshDo(hosts[hostInt].USER, hosts[hostInt].HOST, hosts[hostInt].PASSWD, hosts[hostInt].PORT, sshCommand)
-		if done == true && len(strs) > 0 {
-			if strings.Count(strs, "\n") > toFile {
-				writeFile(tmpFile+".txt", prompt+strs, userInt, false)
-				if uploadToSlack(tmpFile+".txt", channel) == false {
-					return ""
-				}
-				return "<@" + udata[userInt].ID + ">"
-			}
+		strs, done, _ = sshDo(hosts[hostInt].USER, hosts[hostInt].HOST, hosts[hostInt].PASSWD, hosts[hostInt].PORT, sshCommand, sshTimeout)
+		if done == true {
 			break
 		}
 	}
-	if done == false {
-		return ""
-	}
 
-	if strings.Index(Command, "pwd") == 0 {
-		return "<@" + udata[userInt].ID + ">\n```\n" + prompt + udata[userInt].PWD + "\n" + "```"
-	}
+	if dFlag == true && done == true {
+		udata[userInt].PWD = strings.TrimRight(strs, "\n")
 
-	if err == nil && strings.Index(Command, "cd ") == 0 {
-		stra := strings.Split(Command, "cd ")
-		udata[userInt].PWD = stra[1]
+		sig <- channel + "\t" + udata[userInt].ID + "\t" + prompt + "\t" + udata[userInt].PWD
 		writeUsersData()
+		return
 	}
 
 	if len(strs) > 1 {
-		return "<@" + udata[userInt].ID + ">\n```\n" + prompt + convertChar(strs) + "```"
+		sig <- channel + "\t" + udata[userInt].ID + "\t" + prompt + "\t" + convertChar(strs)
+	} else {
+		sig <- channel + "\t" + udata[userInt].ID + "\t" + prompt
 	}
-	return "<@" + udata[userInt].ID + ">\n```\n" + prompt + "```"
 }
 
 func convertChar(strs string) string {
@@ -1130,52 +1654,79 @@ func convertChar(strs string) string {
 	return strs
 }
 
-func sshDo(User, Host, Passwd, Port, Command string) (string, bool, error) {
-	ssh := &easyssh.MakeConfig{
-		User:     User,
-		Server:   Host,
-		Password: Passwd,
-		Port:     Port,
-		Timeout:  time.Duration(sshTimeout) * time.Second,
+func sshDo(User, Host, Passwd, Port, Command string, timeouts int) (string, bool, error) {
+	timeout := time.Duration(sshTimeout) * time.Second
+
+	config := &ssh.ClientConfig{
+		User:            User,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Auth: []ssh.AuthMethod{
+			ssh.Password(Passwd),
+		},
+		Timeout: timeout,
 	}
 
 	if Exists(Passwd) == true {
-		ssh = &easyssh.MakeConfig{
-			User:       User,
-			Server:     Host,
-			KeyPath:    Passwd,
-			Port:       Port,
-			Timeout:    time.Duration(sshTimeout) * time.Second,
-			Passphrase: "",
+		buf, err := ioutil.ReadFile(Passwd)
+		if err != nil {
+			fmt.Println(err)
+			return "", false, err
+		}
+		key, err := ssh.ParsePrivateKey(buf)
+		if err != nil {
+			fmt.Println(err)
+			return "", false, err
+		}
+		config = &ssh.ClientConfig{
+			User:            User,
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+			Auth: []ssh.AuthMethod{
+				ssh.PublicKeys(key),
+			},
+			Timeout: timeout,
 		}
 	}
 
 	debugLog("ssh: " + Command)
 
-	stdout, stderr, done, err := ssh.Run(Command, 30*time.Second)
-
-	debugLog("stdout is :" + stdout + ";   stderr is :" + stderr)
-
-	if done == true {
-		if len(stdout) > 0 {
-			return stdout, done, err
-		} else if len(stderr) > 0 {
-			return stderr, done, err
-		} else {
-			return " ", done, err
-		}
+	conn, err := ssh.Dial("tcp", Host+":"+Port, config)
+	if err != nil {
+		fmt.Println(err)
+		return "", false, err
 	}
-	return " ", done, err
+	defer conn.Close()
+
+	session, err := conn.NewSession()
+	if err != nil {
+		fmt.Println(err)
+		return "", false, err
+	}
+	defer session.Close()
+
+	var b, e bytes.Buffer
+	session.Stdout = &b
+	session.Stderr = &e
+
+	debugLog("stdout is :" + b.String() + ";   stderr is :" + e.String())
+
+	if err := session.Run(Command); err != nil {
+		return e.String(), false, err
+	}
+
+	return b.String(), true, err
 }
 
-func scpDo(hostInt int, tmpFile, path string) bool {
+func scpDo(reverse bool, hostInt int, tmpFile, path string) bool {
 	config := &ssh.ClientConfig{
 		User:            hosts[hostInt].USER,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth: []ssh.AuthMethod{
 			ssh.Password(hosts[hostInt].PASSWD),
 		},
+		Timeout: time.Duration(uploadtimeout) * time.Second,
 	}
+
+	fmt.Println("scpDo " + hosts[hostInt].USER + " " + hosts[hostInt].PASSWD + " " + tmpFile + " " + path)
 
 	if Exists(hosts[hostInt].PASSWD) == true {
 		buf, err := ioutil.ReadFile(hosts[hostInt].PASSWD)
@@ -1195,6 +1746,7 @@ func scpDo(hostInt int, tmpFile, path string) bool {
 			Auth: []ssh.AuthMethod{
 				ssh.PublicKeys(key),
 			},
+			Timeout: time.Duration(uploadtimeout) * time.Second,
 		}
 	}
 
@@ -1204,17 +1756,26 @@ func scpDo(hostInt int, tmpFile, path string) bool {
 		return false
 	}
 
-	session, err := client.NewSession()
-	if err != nil {
-		fmt.Print(err.Error())
-		return false
+	scp := new(scplib.SCPClient)
+	scp.Permission = false // copy permission with scp flag
+	scp.Connection = client
+
+	if reverse == false {
+		err = scp.PutFile([]string{tmpFile}, path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to scp put: %s\n", err)
+			scp.Connection.Close()
+			return false
+		}
+	} else {
+		err = scp.GetFile([]string{tmpFile}, path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to scp put: %s\n", err)
+			scp.Connection.Close()
+			return false
+		}
 	}
-	err = scp.CopyPath(tmpFile, path, session)
-	if err != nil {
-		fmt.Print(err.Error())
-		return false
-	}
-	defer session.Close()
+	scp.Connection.Close()
 	return true
 }
 
