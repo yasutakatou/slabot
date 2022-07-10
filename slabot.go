@@ -1512,6 +1512,9 @@ func upload(hostInt, userInt int, Command, channel string, api *slack.Client) bo
 		return false
 	}
 
+	time.Sleep(60 * time.Second)
+
+	fmt.Println("DELETE" + Command)
 	if err := os.Remove(Command); err != nil {
 		fmt.Println(err)
 	}
