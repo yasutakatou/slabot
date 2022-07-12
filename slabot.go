@@ -20,6 +20,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -371,10 +372,10 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 				case slackevents.CallbackEvent:
 					innerEvent := eventsAPIEvent.InnerEvent
 					switch event := innerEvent.Data.(type) {
-					case *slackevents.AppMentionEvent:
-						message := strings.Split(event.Text, " ")
-						if len(message) > 1 {
-							command := strings.Replace(event.Text, message[0]+" ", "", 1)
+					case *slackevents.MessageEvent:
+						if len(event.Text) > 1 && validMessage(api, event.Text, event.User, event.Channel) == true {
+							//command := strings.Replace(event.Text, strings.Split(event.Text, " ")[0]+" ", "", 1)
+							command := event.Text
 
 							debugLog("socket call: " + event.User + " " + command)
 
@@ -447,8 +448,6 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 								}
 							}
 						}
-					case *slackevents.MemberJoinedChannelEvent:
-						fmt.Printf("user %q joined to channel %q", event.User, event.Channel)
 					}
 				default:
 					client.Debugf("unsupported Events API event received")
@@ -494,6 +493,48 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 		}
 	}()
 	client.Run()
+}
+
+func validMessage(api *slack.Client, text, id, channnel string) bool {
+	uFlag := false
+
+	for _, user := range allows {
+		if user.ID == id {
+			uFlag = true
+			break
+		}
+	}
+
+	if uFlag == false {
+		return false
+	}
+
+	command := strings.Split(text, " ")
+
+	if strings.Index(text, "toSLACK=") == 0 {
+		return true
+	} else if strings.Index(text, "toSERVER=") == 0 {
+		return true
+	} else if strings.Index(text, "SETHOST=") == 0 {
+		return true
+	} else if strings.Index(text, "alias=") == 0 {
+		return true
+	} else if strings.Index(text, "RULES=") == 0 {
+		return true
+	} else if strings.Index(text, "cd ") == 0 {
+		return true
+	}
+
+	_, err := exec.Command("which", command[0]).Output()
+	debugLog("commandValid: " + command[0])
+	if err != nil {
+		_, _, err := api.PostMessage(channnel, slack.MsgOptionText("<@"+id+"> "+command[0]+": command not found!", false))
+		if err != nil {
+			fmt.Printf("failed posting message: %v", err)
+		}
+		return false
+	}
+	return true
 }
 
 func adminCommandCheck(user, command string) int {
