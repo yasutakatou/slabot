@@ -105,7 +105,7 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 	- メンション無しでも動作するようしました！
 		- 毎回のメンションが無くなり、サクっと動かせるようになりました
-	-ファイルをアップロードする時のタイムアウト時間を設定出来るようにしました
+	- ファイルをSlackへアップロードする時のタイムアウト時間を設定出来るようにしました
 		- 巨大なファイルでもタイムアウトしないように時間を設定出来るようにしました
 
 ## 解決したい課題
@@ -188,8 +188,8 @@ go build slabot.go
 	- Add Bot User Event
 		- app_mentions:read
 		- channels:history
-			- v0.993から
-			- private channelなら message.groups を追加してください
+			- **v0.993から**
+			- **private channelで使用する message.groups を追加してください**
 	- Save Changes
 
 2. Slackのアプリからボットを使いたいチャンネルで招待してください
@@ -211,7 +211,9 @@ go build slabot.go
 
 要するに踏み台の機能がBotになったと思っていただければ。全てBotヘメンションしてください
 
-- v0.993より　メンション不要になりました。**ローカルで実行できるコマンドは、リモートでも実行できるものとして判定します**
+- v0.993より　メンション不要になりました。
+- **ボットが動くローカルでコマンドが実行できるか検証して、エラーにならなければリモートでも実行できるものとして判定します**
+- **つまり動作させたいコマンドはローカルにも入っている必要があります**
 
 ![image](https://user-images.githubusercontent.com/22161385/178767279-e5f270c9-9569-4b20-b001-19b7650abb9c.png)
 
