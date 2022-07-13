@@ -189,7 +189,7 @@ go build slabot.go
 		- app_mentions:read
 		- channels:history
 			- **v0.993から**
-			- **private channelで使用する message.groups を追加してください**
+			- **private channelで使用する場合は message.groups を追加してください**
 	- Save Changes
 
 2. Slackのアプリからボットを使いたいチャンネルで招待してください
