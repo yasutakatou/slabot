@@ -20,6 +20,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,25 +45,26 @@ const (
 )
 
 var (
-	secAlert   bool
-	debug      bool
-	logging    bool
-	delUpload  bool
-	sshTimeout int
-	RETRY      int
-	toFile     int
-	alerts     []alertData
-	allows     []allowData
-	allowCmds  []allowCommandData
-	rejects    []rejectData
-	hosts      []hostsData
-	udata      []userData
-	botName    string
-	autoRW     bool
-	lockFile   string
-	configFile string
-	admins     []string
-	reports    string
+	secAlert      bool
+	debug         bool
+	logging       bool
+	delUpload     bool
+	sshTimeout    int
+	RETRY         int
+	toFile        int
+	alerts        []alertData
+	allows        []allowData
+	allowCmds     []allowCommandData
+	rejects       []rejectData
+	hosts         []hostsData
+	udata         []userData
+	botName       string
+	autoRW        bool
+	lockFile      string
+	configFile    string
+	admins        []string
+	reports       string
+	uploadtimeout int64
 )
 
 type alertData struct {
@@ -140,6 +142,7 @@ func main() {
 	_delUpload := flag.Bool("delUpload", false, "[-delUpload=file delete after upload (true is enable)]")
 	_checkRules := flag.Bool("check", true, "[-check=check rules. if connect fail to not use rule. (true is enable)]")
 	_loop := flag.Int("loop", 24, "[-loop=user check loop time (Hour). ]")
+	_uploadtimeout := flag.Int64("uploadtimeout", 900, "[-uploadtimeout=Timeout time for uploading to Slack (Second). ]")
 
 	flag.Parse()
 
@@ -152,6 +155,7 @@ func main() {
 	sshTimeout = int(*_sshTimeout)
 	toFile = int(*_TOFILE)
 	botName = string(*_botName)
+	uploadtimeout = int64(*_uploadtimeout)
 
 	autoRW = bool(*_autoRW)
 	lockFile = string(*_lockFile)
@@ -368,10 +372,10 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 				case slackevents.CallbackEvent:
 					innerEvent := eventsAPIEvent.InnerEvent
 					switch event := innerEvent.Data.(type) {
-					case *slackevents.AppMentionEvent:
-						message := strings.Split(event.Text, " ")
-						if len(message) > 1 {
-							command := strings.Replace(event.Text, message[0]+" ", "", 1)
+					case *slackevents.MessageEvent:
+						if len(event.Text) > 1 && validMessage(api, event.Text, event.User, event.Channel) == true {
+							//command := strings.Replace(event.Text, strings.Split(event.Text, " ")[0]+" ", "", 1)
+							command := event.Text
 
 							debugLog("socket call: " + event.User + " " + command)
 
@@ -444,8 +448,6 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 								}
 							}
 						}
-					case *slackevents.MemberJoinedChannelEvent:
-						fmt.Printf("user %q joined to channel %q", event.User, event.Channel)
 					}
 				default:
 					client.Debugf("unsupported Events API event received")
@@ -491,6 +493,48 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 		}
 	}()
 	client.Run()
+}
+
+func validMessage(api *slack.Client, text, id, channnel string) bool {
+	uFlag := false
+
+	for _, user := range allows {
+		if user.ID == id {
+			uFlag = true
+			break
+		}
+	}
+
+	if uFlag == false {
+		return false
+	}
+
+	command := strings.Split(text, " ")
+
+	if strings.Index(text, "toSLACK=") == 0 {
+		return true
+	} else if strings.Index(text, "toSERVER=") == 0 {
+		return true
+	} else if strings.Index(text, "SETHOST=") == 0 {
+		return true
+	} else if strings.Index(text, "alias=") == 0 {
+		return true
+	} else if strings.Index(text, "RULES=") == 0 {
+		return true
+	} else if strings.Index(text, "cd ") == 0 {
+		return true
+	}
+
+	_, err := exec.Command("which", command[0]).Output()
+	debugLog("commandValid: " + command[0])
+	if err != nil {
+		_, _, err := api.PostMessage(channnel, slack.MsgOptionText("<@"+id+"> "+command[0]+": command not found!", false))
+		if err != nil {
+			fmt.Printf("failed posting message: %v", err)
+		}
+		return false
+	}
+	return true
 }
 
 func adminCommandCheck(user, command string) int {
@@ -793,7 +837,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 	userInt := checkUsers(User)
 
 	// for debug
-	//udata[userInt].HOST = 0
+	// udata[userInt].HOST = 0
 	// for debug
 
 	trueFalse := false
@@ -958,10 +1002,6 @@ func uploadFile(userInt int, path string, api *slack.Client) (bool, string) {
 
 	if scpDo(false, udata[userInt].HOST, files[0].Name, path) == false {
 		return false, "file not scp: " + files[0].Name
-	}
-
-	if err := os.Remove(files[0].Name); err != nil {
-		fmt.Println(err)
 	}
 
 	if delUpload == true {
@@ -1503,6 +1543,7 @@ func upload(hostInt, userInt int, Command, channel string, api *slack.Client) bo
 	} else {
 		filepath = udata[userInt].PWD + "/" + Command
 	}
+	debugLog("filepath: " + filepath)
 
 	if scpDo(true, hostInt, filepath, Command) == false {
 		return false
@@ -1512,6 +1553,9 @@ func upload(hostInt, userInt int, Command, channel string, api *slack.Client) bo
 		return false
 	}
 
+	time.Sleep(60 * time.Second)
+
+	fmt.Println("DELETE" + Command)
 	if err := os.Remove(Command); err != nil {
 		fmt.Println(err)
 	}
@@ -1723,6 +1767,7 @@ func scpDo(reverse bool, hostInt int, tmpFile, path string) bool {
 		Auth: []ssh.AuthMethod{
 			ssh.Password(hosts[hostInt].PASSWD),
 		},
+		Timeout: time.Duration(uploadtimeout) * time.Second,
 	}
 
 	fmt.Println("scpDo " + hosts[hostInt].USER + " " + hosts[hostInt].PASSWD + " " + tmpFile + " " + path)
@@ -1745,6 +1790,7 @@ func scpDo(reverse bool, hostInt int, tmpFile, path string) bool {
 			Auth: []ssh.AuthMethod{
 				ssh.PublicKeys(key),
 			},
+			Timeout: time.Duration(uploadtimeout) * time.Second,
 		}
 	}
 
