@@ -519,7 +519,7 @@ func validMessage(api *slack.Client, text, id, channnel string) bool {
 		return true
 	} else if strings.Index(text, "alias=") == 0 {
 		return true
-	} else if strings.Index(text, "RULES=") == 0 {
+	} else if strings.Index(text, "RULES") == 0 {
 		return true
 	} else if strings.Index(text, "cd ") == 0 {
 		return true
