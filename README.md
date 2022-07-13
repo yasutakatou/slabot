@@ -101,6 +101,13 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 	- 他のユーザーのアカウント有効期間を参照しちゃうバグをFIX
 
+- v0.993
+
+	- メンション無しでも動作するようしました！
+		- 毎回のメンションが無くなり、サクっと動かせるようになりました
+	-ファイルをアップロードする時のタイムアウト時間を設定出来るようにしました
+		- 巨大なファイルでもタイムアウトしないように時間を設定出来るようにしました
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -181,6 +188,8 @@ go build slabot.go
 	- Add Bot User Event
 		- app_mentions:read
 		- channels:history
+			- v0.993から
+			- private channelなら message.groups を追加してください
 	- Save Changes
 
 2. Slackのアプリからボットを使いたいチャンネルで招待してください
@@ -201,6 +210,10 @@ go build slabot.go
 ## 使い方
 
 要するに踏み台の機能がBotになったと思っていただければ。全てBotヘメンションしてください
+
+- v0.993より　メンション不要になりました。**ローカルで実行できるコマンドは、リモートでも実行できるものとして判定します**
+
+![image](https://user-images.githubusercontent.com/22161385/178767279-e5f270c9-9569-4b20-b001-19b7650abb9c.png)
 
 1. SETHOST=[コンフィグの定義名]でアクセス先を指定します
 
@@ -545,6 +558,8 @@ Usage of slabot:
         [-timeout=timeout count (second). ] (default 30)
   -toFile int
         [-toFile=if output over this value. be file.] (default 20)
+  -uploadtimeout int
+        [-uploadtimeout=Timeout time for uploading to Slack (Second). ] (default 900)
 ```
 
 ## -alert
@@ -612,6 +627,9 @@ sshでコマンドを投げた後のタイムアウト値です。デフォル�
 
 ### -toFile
 長い行数の出力をテキストファイルにして、アップロードする際の閾値になります。デフォルトは**20**で20行を越える場合にファイルに変換されます。
+
+### -uploadtimeout
+Slackへのアップロード時のタイムアウト時間です。デフォルトでは900秒待ちます
 
 ## ライセンス
 
