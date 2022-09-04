@@ -381,7 +381,7 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 
 							switch command {
 							case "RULES":
-								rules := returnRules(checkUsers(event.User))
+								rules := returnRules(initUsers(event.User))
 
 								if len(rules) > 0 {
 									text := slack.NewTextBlockObject(slack.MarkdownType, "Please select *RULE*.", false, false)
@@ -473,11 +473,17 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 				vals := strings.Split(val, ":")
 				ruleName := strings.Replace(vals[1], "\"", "", -1)
 				userInt := checkUsers(callback.User.ID)
-				udata[userInt].HOST = hostCheck(ruleName, allows[userInt].LABEL)
 
-				text := "<@" + udata[userInt].ID + "> " + ruleName + " : host set"
-				udata[userInt].PWD = setHome()
-				writeUsersData()
+				text := ""
+				if userInt == -1 {
+					text = "ERROR: User not found.."
+				} else {
+					udata[userInt].HOST = hostCheck(ruleName, allows[retUser(callback.User.ID)].LABEL)
+
+					text = "<@" + udata[userInt].ID + "> " + ruleName + " : host set"
+					udata[userInt].PWD = setHome()
+					writeUsersData()
+				}
 
 				_, _, err := api.PostMessage(callback.Channel.GroupConversation.Conversation.ID, slack.MsgOptionText(text, false))
 				if err != nil {
@@ -526,14 +532,18 @@ func validMessage(api *slack.Client, text, id, channnel string) bool {
 	}
 
 	_, err := exec.Command("which", command[0]).Output()
-	debugLog("commandValid: " + command[0])
 	if err != nil {
-		_, _, err := api.PostMessage(channnel, slack.MsgOptionText("<@"+id+"> "+command[0]+": command not found!", false))
-		if err != nil {
-			fmt.Printf("failed posting message: %v", err)
-		}
+		debugLog("command not found!: " + command[0])
+
+		// Remove this comment if you wish to be notified when a command cannot be executed. But it is very annoying.
+		//
+		//_, _, err := api.PostMessage(channnel, slack.MsgOptionText("<@"+id+"> "+command[0]+": command not found!", false))
+		//if err != nil {
+		//	fmt.Printf("failed posting message: %v", err)
+		//}
 		return false
 	}
+	debugLog("commandValid: " + command[0])
 	return true
 }
 
@@ -835,6 +845,9 @@ func unset(s []string, i int) []string {
 
 func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Client, needSCP bool) (bool, string) {
 	userInt := checkUsers(User)
+	if userInt == -1 {
+		return false, "ERROR: User not found.."
+	}
 
 	// for debug
 	// udata[userInt].HOST = 0
@@ -892,7 +905,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 		}
 		if strings.Index(Command, "SETHOST=") == 0 {
 			stra := strings.Split(Command, "SETHOST=")
-			hostInt := hostCheck(stra[1], allows[userInt].LABEL)
+			hostInt := hostCheck(stra[1], allows[retUser(User)].LABEL)
 			if hostInt == -2 {
 				debugLog("Error: host not allow. " + User + " " + Command)
 
@@ -1356,15 +1369,40 @@ func Exists(filename string) bool {
 	return err == nil
 }
 
+func initUsers(User string) int {
+	usertNum := 0
+
+	for i := 0; i < len(allows); i++ {
+		if allows[i].ID == User {
+			usertNum = i
+		}
+	}
+
+	if usertNum == 0 {
+		return -1
+	}
+
+	udata = append(udata, userData{ID: User, HOST: -1, PWD: setHome(), ALIAS: nil})
+	return usertNum
+}
+
+func retUser(User string) int {
+	for i := 0; i < len(allows); i++ {
+		if allows[i].ID == User {
+			return i
+		}
+	}
+
+	return -1
+}
+
 func checkUsers(User string) int {
 	for i := 0; i < len(udata); i++ {
 		if udata[i].ID == User {
 			return i
 		}
 	}
-
-	udata = append(udata, userData{ID: User, HOST: -1, PWD: setHome(), ALIAS: nil})
-	return len(udata) - 1
+	return -1
 }
 
 func setHome() string {
@@ -1433,6 +1471,7 @@ func checkPreExecuter(sig chan string, User, Command string, hostInt int, channe
 	}
 
 	userInt = userCheck(User)
+
 	go executer(sig, userInt, hostInt, Command, channel, needSCP)
 
 	return true, ""
@@ -1603,19 +1642,27 @@ func userCheck(User string) int {
 }
 
 func hostCheck(Host, uLabel string) int {
+	rFlag := false
 	for i := 0; i < len(hosts); i++ {
 		if hosts[i].RULE == Host {
-			if hosts[i].LABEL != uLabel {
-				return -2
+			if hosts[i].LABEL == uLabel {
+				return i
 			}
-			return i
+			rFlag = true
 		}
+	}
+	if rFlag == false {
+		return -2
 	}
 	return -1
 }
 
+func lookup(host int) string {
+	return hosts[host].RULE
+}
+
 func executer(sig chan string, userInt, hostInt int, Command, channel string, needSCP bool) {
-	prompt := "[@" + botName + " " + udata[userInt].PWD + "]$ " + Command + "\n"
+	prompt := "[@" + lookup(udata[userInt].HOST) + " " + udata[userInt].PWD + "]$ " + Command + "\n"
 	done := false
 	strs := ""
 	dFlag := false
