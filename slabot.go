@@ -381,9 +381,10 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 
 							switch command {
 							case "RULES":
-								rules := returnRules(initUsers(event.User))
+								rInt := initUsers(event.User)
 
-								if len(rules) > 0 {
+								if rInt != -1 {
+									rules := returnRules(rInt)
 									text := slack.NewTextBlockObject(slack.MarkdownType, "Please select *RULE*.", false, false)
 									textSection := slack.NewSectionBlock(text, nil, nil)
 
@@ -1370,7 +1371,7 @@ func Exists(filename string) bool {
 }
 
 func initUsers(User string) int {
-	usertNum := 0
+	usertNum := -1
 
 	for i := 0; i < len(allows); i++ {
 		if allows[i].ID == User {
@@ -1378,7 +1379,7 @@ func initUsers(User string) int {
 		}
 	}
 
-	if usertNum == 0 {
+	if usertNum == -1 {
 		return -1
 	}
 
@@ -1662,7 +1663,7 @@ func lookup(host int) string {
 }
 
 func executer(sig chan string, userInt, hostInt int, Command, channel string, needSCP bool) {
-	prompt := "[@" + lookup(udata[userInt].HOST) + " " + udata[userInt].PWD + "]$ " + Command + "\n"
+	prompt := "[" + lookup(udata[userInt].HOST) + " " + udata[userInt].PWD + "]$ " + Command + "\n"
 	done := false
 	strs := ""
 	dFlag := false
