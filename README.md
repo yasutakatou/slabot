@@ -115,6 +115,13 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- 複数ルールがある時の挙動がバグってたので修正しました
 		- 複数人で使う時に挙動がオカシイので直しました
 
+- v0.995
+
+	- メンションが煩すぎるとかんじる人がいるようなのでお黙りモード(-nomention)を追加しました
+		- 静かになります　※ただしセキュリティアラートはメンションでますよ
+
+![image](https://user-images.githubusercontent.com/22161385/189469094-c202cda2-9bb1-4111-a3f9-8c39f840fee3.png)
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -557,7 +564,9 @@ Usage of slabot:
         [-log=logging mode (true is enable)]
   -loop int
         [-loop=user check loop time (Hour). ] (default 24)
-  -plainpassword
+  -nomention
+        [-nomention=This is the mode in which no mentions are made. (true is enable)]
+　-plainpassword
         [-plainpassword=use plain text password (true is enable)]
   -retry int
         [-retry=retry counts.] (default 10)
@@ -619,6 +628,12 @@ Encrypt: 5NVkTdvu5-g0pQCcy0RpOnxuaLFplSJZ0SIjtQqyVZKMGcFIuiY=
 
 ### -loop
 コンフィグに指定したチャンネルにレポートをあげる時間の間隔です。単位は一時間でデフォルトは２４時間です。
+
+### -nomention
+
+ボットからのメンションが出なくなって静かになります
+
+**※ただしセキュリティアラートはメンションでます**
 
 ### -plainpassword
 パスワード平文モードです。trueにすると、コンフィグの認証情報部分の文字列を複合せずに平文のまま認証します。
