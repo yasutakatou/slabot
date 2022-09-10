@@ -52,6 +52,7 @@ var (
 	sshTimeout    int
 	RETRY         int
 	toFile        int
+	nomention     bool
 	alerts        []alertData
 	allows        []allowData
 	allowCmds     []allowCommandData
@@ -136,13 +137,13 @@ func main() {
 	_sshTimeout := flag.Int("timeout", 30, "[-timeout=timeout count (second). ]")
 	_botName := flag.String("bot", "slabot", "[-bot=slack bot name (@ + name)]")
 	_IDLookup := flag.Bool("idlookup", true, "[-idlookup=resolve to ID definition (true is enable)]")
-
 	_autoRW := flag.Bool("auto", true, "[-auto=config auto read/write mode (true is enable)]")
 	_lockFile := flag.String("lock", ".lock", "[-lock=lock file for auto read/write)]")
 	_delUpload := flag.Bool("delUpload", false, "[-delUpload=file delete after upload (true is enable)]")
 	_checkRules := flag.Bool("check", true, "[-check=check rules. if connect fail to not use rule. (true is enable)]")
 	_loop := flag.Int("loop", 24, "[-loop=user check loop time (Hour). ]")
 	_uploadtimeout := flag.Int64("uploadtimeout", 900, "[-uploadtimeout=Timeout time for uploading to Slack (Second). ]")
+	_nomention := flag.Bool("nomention", false, "[-nomention=This is the mode in which no mentions are made. (true is enable)]")
 
 	flag.Parse()
 
@@ -156,6 +157,7 @@ func main() {
 	toFile = int(*_TOFILE)
 	botName = string(*_botName)
 	uploadtimeout = int64(*_uploadtimeout)
+	nomention = bool(*_nomention)
 
 	autoRW = bool(*_autoRW)
 	lockFile = string(*_lockFile)
@@ -248,9 +250,9 @@ func main() {
 				case 1:
 					stra = "Error: not execute!"
 				case 2:
-					stra = "<@" + strs[1] + ">\nError: not execute!"
+					stra = switchMention(strs[1]) + "Error: not execute!"
 				case 3:
-					stra = "<@" + strs[1] + ">\n```\n" + strs[2] + "```"
+					stra = switchMention(strs[1]) + "```\n" + strs[2] + "```"
 				case 4:
 					tmpFile := "tmp." + strs[1]
 
@@ -265,12 +267,12 @@ func main() {
 						_, err := api.UploadFile(params)
 						if err != nil {
 							fmt.Printf("%s\n", err)
-							stra = "<@" + strs[1] + ">\nError: terminal not upload!"
+							stra = switchMention(strs[1]) + "Error: terminal not upload!"
 						} else {
-							stra = "<@" + strs[1] + ">\nSuccess: terminal upload success!"
+							stra = switchMention(strs[1]) + "Success: terminal upload success!"
 						}
 					} else {
-						stra = "<@" + strs[1] + ">\n```\n" + strs[2] + strs[3] + "```"
+						stra = switchMention(strs[1]) + "```\n" + strs[2] + strs[3] + "```"
 					}
 				}
 				_, _, err := api.PostMessage(strs[0], slack.MsgOptionText(stra, false))
@@ -430,7 +432,7 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 										writeUsersData()
 									}
 								case 1:
-									text = "<@" + event.User + "> not Allow ADMIN Mode."
+									text = switchMention(event.User) + "not Allow ADMIN Mode."
 									if secAlert == true {
 										text = text + "\n [Security Alert!] " + alertUsers()
 									}
@@ -481,7 +483,7 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 				} else {
 					udata[userInt].HOST = hostCheck(ruleName, allows[retUser(callback.User.ID)].LABEL)
 
-					text = "<@" + udata[userInt].ID + "> " + ruleName + " : host set"
+					text = switchMention(udata[userInt].ID) + ruleName + " : host set"
 					udata[userInt].PWD = setHome()
 					writeUsersData()
 				}
@@ -538,7 +540,7 @@ func validMessage(api *slack.Client, text, id, channnel string) bool {
 
 		// Remove this comment if you wish to be notified when a command cannot be executed. But it is very annoying.
 		//
-		//_, _, err := api.PostMessage(channnel, slack.MsgOptionText("<@"+id+"> "+command[0]+": command not found!", false))
+		//_, _, err := api.PostMessage(channnel, slack.MsgOptionText(switchMention(id)+command[0]+": command not found!", false))
 		//if err != nil {
 		//	fmt.Printf("failed posting message: %v", err)
 		//}
@@ -844,6 +846,13 @@ func unset(s []string, i int) []string {
 	return append(s[:i], s[i+1:]...)
 }
 
+func switchMention(ID string) string {
+	if nomention == true {
+		return ""
+	}
+	return "<@" + ID + ">\n"
+}
+
 func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Client, needSCP bool) (bool, string) {
 	userInt := checkUsers(User)
 	if userInt == -1 {
@@ -871,7 +880,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 			if len(strs) == 0 {
 				strs = "no alias!"
 			}
-			return true, "<@" + udata[userInt].ID + ">\n```\n" + strs + "```"
+			return true, switchMention(udata[userInt].ID) + "```\n" + strs + "```"
 		}
 		if strings.Index(Command, "alias ") == 0 && strings.Index(Command, "=") != -1 {
 			if checkMode(udata[userInt].ID) == false {
@@ -880,21 +889,21 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 					Command := strings.Replace(Command, "alias ", "", 1)
 					deleteAlias(userInt, Command)
 					trueFalse = true
-					data = "<@" + udata[userInt].ID + "> " + Command + " : alias delete"
+					data = switchMention(udata[userInt].ID) + Command + " : alias delete"
 					writeUsersData()
 				} else {
 					Command := strings.Replace(Command, "alias ", "", 1)
 					udata[userInt].ALIAS = append(udata[userInt].ALIAS, Command)
 					trueFalse = true
-					data = "<@" + udata[userInt].ID + "> " + Command + " : alias set"
+					data = switchMention(udata[userInt].ID) + Command + " : alias set"
 					writeUsersData()
 				}
 			} else {
-				data = "<@" + udata[userInt].ID + "> : allow mode, alias not use!"
+				data = switchMention(udata[userInt].ID) + "\nallow mode, alias not use!"
 			}
 		} else {
 			trueFalse = false
-			data = "<@" + udata[userInt].ID + "> " + Command + " : alias set fail"
+			data = switchMention(udata[userInt].ID) + Command + " : alias set fail"
 		}
 	} else if strings.Index(Command, "SETHOST") == 0 {
 		if Command == "SETHOST" {
@@ -902,7 +911,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 			if len(strs) == 0 {
 				strs = "no hosts!"
 			}
-			return true, "<@" + udata[userInt].ID + ">\n```\n" + strs + "```"
+			return true, switchMention(udata[userInt].ID) + "```\n" + strs + "```"
 		}
 		if strings.Index(Command, "SETHOST=") == 0 {
 			stra := strings.Split(Command, "SETHOST=")
@@ -911,7 +920,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 				debugLog("Error: host not allow. " + User + " " + Command)
 
 				trueFalse = false
-				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not allow"
+				data = switchMention(udata[userInt].ID) + stra[1] + " : host not allow"
 				if secAlert == true {
 					data = data + "\n [Security Alert!] " + alertUsers()
 				}
@@ -919,12 +928,12 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 				debugLog("Error: host not found. " + User + " " + Command)
 
 				trueFalse = false
-				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host not found"
+				data = switchMention(udata[userInt].ID) + stra[1] + " : host not found"
 			} else {
 				udata[userInt].HOST = hostInt
 
 				trueFalse = true
-				data = "<@" + udata[userInt].ID + "> " + stra[1] + " : host set"
+				data = switchMention(udata[userInt].ID) + stra[1] + " : host set"
 				udata[userInt].PWD = setHome()
 				writeUsersData()
 			}
@@ -945,7 +954,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 			trueFalse, data = uploadFile(userInt, path, api)
 		} else {
 			trueFalse = false
-			data = "<@" + udata[userInt].ID + "> : not allow upload"
+			data = switchMention(udata[userInt].ID) + "not allow upload"
 			if secAlert == true {
 				data = data + "\n [Security Alert!] " + alertUsers()
 			}
@@ -955,15 +964,15 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 			stra := strings.Split(Command, "toSLACK=")
 
 			if upload(udata[userInt].HOST, userInt, stra[1], channel, api) == false {
-				data = "<@" + udata[userInt].ID + "> file upload fail"
+				data = switchMention(udata[userInt].ID) + "file upload fail"
 				trueFalse = false
 			} else {
-				data = "<@" + udata[userInt].ID + "> file upload success"
+				data = switchMention(udata[userInt].ID) + "file upload success"
 				trueFalse = true
 			}
 		} else {
 			trueFalse = false
-			data = "<@" + udata[userInt].ID + "> : not allow download"
+			data = switchMention(udata[userInt].ID) + "not allow download"
 			if secAlert == true {
 				data = data + "\n [Security Alert!] " + alertUsers()
 			}
@@ -974,7 +983,7 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 			trueFalse, data = checkPreExecuter(sig, User, Command, udata[userInt].HOST, channel, api, needSCP)
 		} else {
 			trueFalse = false
-			data = "<@" + udata[userInt].ID + "> " + Command + ": host not set"
+			data = switchMention(udata[userInt].ID) + Command + ": host not set"
 		}
 	}
 	return trueFalse, data
@@ -1593,12 +1602,17 @@ func upload(hostInt, userInt int, Command, channel string, api *slack.Client) bo
 		return false
 	}
 
-	time.Sleep(60 * time.Second)
-
-	fmt.Println("DELETE" + Command)
-	if err := os.Remove(Command); err != nil {
-		fmt.Println(err)
+	dFlag := false
+	for i := 0; i < 10; i++ {
+		time.Sleep(10 * time.Second)
+		if err := os.Remove(Command); err == nil {
+			dFlag = true
+		}
 	}
+	if dFlag == false {
+		debugLog(Command + " delete failure..")
+	}
+
 	return true
 }
 
