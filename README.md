@@ -120,6 +120,10 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 	- メンションが煩すぎるとかんじる人がいるようなのでお黙りモード(-nomention)を追加しました
 		- 静かになります　※ただしセキュリティアラートはメンションでますよ
 
+- v0.996
+
+	- 特定コマンド許可モードの挙動にバグがあったのでFIX
+
 ![image](https://user-images.githubusercontent.com/22161385/189469094-c202cda2-9bb1-4111-a3f9-8c39f840fee3.png)
 
 ## 解決したい課題
