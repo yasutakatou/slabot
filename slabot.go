@@ -1488,6 +1488,7 @@ func checkPreExecuter(sig chan string, User, Command string, hostInt int, channe
 }
 
 func checkRejct(ID, Command string) bool {
+	debugLog(ID + ": reject check")
 	sID := 0
 	uID := ""
 	for i := 0; i < len(allows); i++ {
@@ -1516,6 +1517,9 @@ func checkRejct(ID, Command string) bool {
 		for i := 0; i < len(allowCmds[aInt-1].COMMANDS); i++ {
 			if strings.Index(Command, allowCmds[aInt-1].COMMANDS[i]+" ") == 0 || strings.Index(Command, allowCmds[aInt-1].COMMANDS[i]) == 0 {
 				if checkPipe(Command) == true {
+					debugLog(Command + ": include pipe!")
+					return true
+				} else {
 					return false
 				}
 			}
@@ -1545,23 +1549,21 @@ func checkRejct(ID, Command string) bool {
 
 func checkPipe(command string) bool {
 	if strings.Index(command, ">") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, "<") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, "|") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, "&") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, ";") != -1 {
-		return false
+		return true
 	}
-	debugLog(command + " include pipe!")
-
-	return true
+	return false
 }
 
 func alertUsers() string {
