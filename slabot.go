@@ -64,6 +64,7 @@ var (
 	lockFile      string
 	configFile    string
 	admins        []string
+	dupCommand    string
 	reports       string
 	uploadtimeout int64
 )
@@ -158,6 +159,8 @@ func main() {
 	botName = string(*_botName)
 	uploadtimeout = int64(*_uploadtimeout)
 	nomention = bool(*_nomention)
+
+	dupCommand = ""
 
 	autoRW = bool(*_autoRW)
 	lockFile = string(*_lockFile)
@@ -437,18 +440,24 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 										text = text + "\n [Security Alert!] " + alertUsers()
 									}
 								default:
-									trueFalse, text = eventSwitcher(sig, event.User, command, event.Channel, api, needSCP)
-								}
+									if dupCommand != command {
+										trueFalse, text = eventSwitcher(sig, event.User, command, event.Channel, api, needSCP)
+										dupCommand = command
+										if trueFalse == false {
+											text = "Error: " + text
+										}
+										if len(text) > 0 {
+											_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
+											if err != nil {
+												fmt.Printf("failed posting message: %v", err)
+											}
+										}
+									} else {
+										debugLog("command dup! " + command)
 
-								if trueFalse == false {
-									text = "Error: " + text
-								}
-								if len(text) > 0 {
-									_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
-									if err != nil {
-										fmt.Printf("failed posting message: %v", err)
 									}
 								}
+
 							}
 						}
 					}
@@ -1488,6 +1497,7 @@ func checkPreExecuter(sig chan string, User, Command string, hostInt int, channe
 }
 
 func checkRejct(ID, Command string) bool {
+	debugLog(ID + ": reject check")
 	sID := 0
 	uID := ""
 	for i := 0; i < len(allows); i++ {
@@ -1516,6 +1526,9 @@ func checkRejct(ID, Command string) bool {
 		for i := 0; i < len(allowCmds[aInt-1].COMMANDS); i++ {
 			if strings.Index(Command, allowCmds[aInt-1].COMMANDS[i]+" ") == 0 || strings.Index(Command, allowCmds[aInt-1].COMMANDS[i]) == 0 {
 				if checkPipe(Command) == true {
+					debugLog(Command + ": include pipe!")
+					return true
+				} else {
 					return false
 				}
 			}
@@ -1545,23 +1558,21 @@ func checkRejct(ID, Command string) bool {
 
 func checkPipe(command string) bool {
 	if strings.Index(command, ">") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, "<") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, "|") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, "&") != -1 {
-		return false
+		return true
 	}
 	if strings.Index(command, ";") != -1 {
-		return false
+		return true
 	}
-	debugLog(command + " include pipe!")
-
-	return true
+	return false
 }
 
 func alertUsers() string {
