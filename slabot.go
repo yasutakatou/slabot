@@ -64,7 +64,7 @@ var (
 	lockFile      string
 	configFile    string
 	admins        []string
-	dupCommand    string
+	dupFile       string
 	reports       string
 	uploadtimeout int64
 )
@@ -160,7 +160,7 @@ func main() {
 	uploadtimeout = int64(*_uploadtimeout)
 	nomention = bool(*_nomention)
 
-	dupCommand = ""
+	dupFile = ""
 
 	autoRW = bool(*_autoRW)
 	lockFile = string(*_lockFile)
@@ -440,21 +440,16 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 										text = text + "\n [Security Alert!] " + alertUsers()
 									}
 								default:
-									if dupCommand != command {
-										trueFalse, text = eventSwitcher(sig, event.User, command, event.Channel, api, needSCP)
-										dupCommand = command
-										if trueFalse == false {
-											text = "Error: " + text
-										}
-										if len(text) > 0 {
-											_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
-											if err != nil {
-												fmt.Printf("failed posting message: %v", err)
-											}
-										}
-									} else {
-										debugLog("command dup! " + command)
+									trueFalse, text = eventSwitcher(sig, event.User, command, event.Channel, api, needSCP)
+									if trueFalse == false {
+										text = "Error: " + text
+									}
 
+									if len(text) > 0 {
+										_, _, err := api.PostMessage(event.Channel, slack.MsgOptionText(text, false))
+										if err != nil {
+											fmt.Printf("failed posting message: %v", err)
+										}
 									}
 								}
 
@@ -972,12 +967,17 @@ func eventSwitcher(sig chan string, User, Command, channel string, api *slack.Cl
 		if allows[userInt].PERMISSION > 0 {
 			stra := strings.Split(Command, "toSLACK=")
 
-			if upload(udata[userInt].HOST, userInt, stra[1], channel, api) == false {
-				data = switchMention(udata[userInt].ID) + "file upload fail"
-				trueFalse = false
+			if dupFile != stra[1] {
+				dupFile = stra[1]
+				if upload(udata[userInt].HOST, userInt, stra[1], channel, api) == false {
+					data = switchMention(udata[userInt].ID) + "file upload fail"
+					trueFalse = false
+				} else {
+					data = switchMention(udata[userInt].ID) + "file upload success and local file delete"
+					trueFalse = true
+				}
 			} else {
-				data = switchMention(udata[userInt].ID) + "file upload success"
-				trueFalse = true
+				debugLog("upload file dup! " + stra[1])
 			}
 		} else {
 			trueFalse = false
@@ -1044,7 +1044,7 @@ func uploadFile(userInt int, path string, api *slack.Client) (bool, string) {
 		}
 	}
 
-	return true, "file upload success: " + files[0].Name
+	return true, "file upload and local file delete success: " + files[0].Name
 }
 
 func writeUsersData() {
@@ -1613,17 +1613,24 @@ func upload(hostInt, userInt int, Command, channel string, api *slack.Client) bo
 		return false
 	}
 
+	_, _, err := api.PostMessage(channel, slack.MsgOptionText("local file deleting.. not use [toSLACK=]!", false))
+	if err != nil {
+		fmt.Printf("failed posting message: %v", err)
+	}
+
 	dFlag := false
 	for i := 0; i < 10; i++ {
-		time.Sleep(10 * time.Second)
+		time.Sleep(30 * time.Second)
 		if err := os.Remove(Command); err == nil {
 			dFlag = true
+			break
 		}
 	}
 	if dFlag == false {
 		debugLog(Command + " delete failure..")
 	}
 
+	dupFile = ""
 	return true
 }
 
