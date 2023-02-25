@@ -211,21 +211,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	// creates a new file watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		fmt.Println("ERROR", err)
-	}
-	//defer watcher.Close()
-
 	if autoRW == true {
+		// creates a new file watcher
+		watcher, err := fsnotify.NewWatcher()
+		if err != nil {
+			fmt.Println("ERROR", err)
+		}
+		//defer watcher.Close()
+
 		go func() {
 			for {
 				select {
 				case <-watcher.Events:
 					if Exists(lockFile) == false {
-						time.Sleep(1 * time.Second)
 						loadConfig(api, addSpace(*_decryptkey), *_plainpassword, false, *_IDLookup)
+						time.Sleep(30 * time.Second)
 					} else {
 						fmt.Println(" - config read locked! - ")
 					}
@@ -234,10 +234,10 @@ func main() {
 				}
 			}
 		}()
-	}
 
-	if err := watcher.Add(configFile); err != nil {
-		fmt.Println("ERROR", err)
+		if err := watcher.Add(configFile); err != nil {
+			fmt.Println("ERROR", err)
+		}
 	}
 
 	go socketMode(sig, api, *_needSCP)
@@ -378,7 +378,7 @@ func socketMode(sig chan string, api *slack.Client, needSCP bool) {
 					innerEvent := eventsAPIEvent.InnerEvent
 					switch event := innerEvent.Data.(type) {
 					case *slackevents.MessageEvent:
-						if len(event.Text) > 1 && validMessage(api, event.Text, event.User, event.Channel) == true {
+						if len(event.Text) > 1 && validMessage(api, event.Text, event.User, event.Channel) == true && event.Channel != reports {
 							//command := strings.Replace(event.Text, strings.Split(event.Text, " ")[0]+" ", "", 1)
 							command := event.Text
 
