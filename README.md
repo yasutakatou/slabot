@@ -126,6 +126,10 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 	- 特定コマンド許可モードの挙動にバグがあったのでFIX
 
+- v.0.7
+
+	- セキュリティFIX
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
