@@ -126,7 +126,7 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 	- 特定コマンド許可モードの挙動にバグがあったのでFIX
 
-- v.0.7
+- v.0.997
 
 	- セキュリティFIX
 
