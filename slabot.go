@@ -1834,10 +1834,16 @@ func sshDo(User, Host, Passwd, Port, Command string, timeouts int) (string, bool
 	debugLog("stdout is :" + b.String() + ";   stderr is :" + e.String())
 
 	if err := session.Run(Command); err != nil {
+		if len(b.String()) > len(e.String()) {
+			return b.String(), false, err
+		}
 		return e.String(), false, err
 	}
 
-	return b.String(), true, err
+	if len(b.String()) > len(e.String()) {
+		return b.String(), true, err
+	}
+	return e.String(), true, err
 }
 
 func scpDo(reverse bool, hostInt int, tmpFile, path string) bool {
