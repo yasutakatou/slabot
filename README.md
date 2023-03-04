@@ -130,6 +130,11 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 	- セキュリティFIX
 
+- v1.0
+
+	- 標準出力とエラー出力の文字数が多い方を出力として拾うように変更
+		- diffコマンドとか差分がある場合にエラー出力に吐くコマンドの出力を拾えてなかったのでなおした
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
