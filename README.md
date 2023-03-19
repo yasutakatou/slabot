@@ -670,4 +670,4 @@ Slackへのアップロード時のタイムアウト時間です。デフォル
 
 ## ライセンス
 
-BSD-2-Clause License, ISC License, BSD-3-Clause License,
+Apache License 2.0
