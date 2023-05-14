@@ -1491,6 +1491,9 @@ func checkPreExecuter(sig chan string, User, Command string, hostInt int, channe
 
 	userInt = userCheck(User)
 
+	if userInt == -1 || userInt > len(allows) {
+		return false, User + " not found"
+	}
 	go executer(sig, userInt, hostInt, Command, channel, needSCP)
 
 	return true, ""
