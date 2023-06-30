@@ -139,6 +139,10 @@ Let's get devs and SREs together in the same channel, and work with the same aut
 
 	- ユーザー数とalias数が違っているとオチてしまっていたのでFIXした
 
+- 2023/06/30追記
+
+	- Socket Modeに必要な権限 conversations.connect:manage をOAuth & Permissionsに記載するのが漏れていた・・・(すいません！)
+
 ## 解決したい課題
 
 ### slackでDevもOpsも集まってリモワ仕事してるとこういう事ないですか？
@@ -209,6 +213,7 @@ go build slabot.go
 		- files:read
 		- files:write
 		- users:read
+		- conversations.connect:manage
 	- Install to Workspace
 	- Bot User OAuth Token
 		- 後で使うのでxoxb-から始まるトークンを控えてください
